@@ -40,7 +40,9 @@ notifications on track change, start-at-startup, and minimize-to-tray.
   essentially free once you're already making that call. Falls back to a
   purely cosmetic, ever-creeping curve (see `PlayerForm.ComputeFakeProgress`)
   for a Bandcamp-only match or no match at all, since SomaFM's own feed never
-  provides a duration for a live radio stream.
+  provides a duration for a live radio stream. A countdown shows at the right
+  end of the progress bar only when the real duration is known - left blank
+  on the fake curve rather than counting down against a made-up total.
 - Click the title, artist, or album text to copy the current track info
   ("Title — Artist — Album") to the clipboard.
 - Clears this app's own stale entries from the Windows Notification Center

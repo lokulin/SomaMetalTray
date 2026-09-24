@@ -80,6 +80,7 @@ public sealed class PlayerForm : Form
     private readonly Label _artistLabel = new();
     private readonly Label _albumLabel = new();
     private readonly Label _elapsedLabel = new();
+    private readonly Label _remainingLabel = new();
     private readonly Label _statusLabel = new();
     private readonly CirclePlayButton _playButton = new();
     private readonly VolumeSliderControl _volumeSlider = new();
@@ -233,6 +234,16 @@ public sealed class PlayerForm : Form
         _elapsedLabel.Location = new Point(InfoLeft, TimeLabelsTop);
         _elapsedLabel.Text = "";
 
+        // Only ever populated when a real duration is known (see
+        // UpdateProgress) - left blank while running on the fake curve,
+        // since showing a countdown against a made-up total would be
+        // actively misleading rather than just decorative.
+        _remainingLabel.Font = new Font("Segoe UI", 8f);
+        _remainingLabel.ForeColor = Color.Gainsboro;
+        _remainingLabel.BackColor = Color.Transparent;
+        _remainingLabel.AutoSize = true;
+        _remainingLabel.Text = "";
+
         _statusLabel.Font = new Font("Segoe UI", 8f, FontStyle.Italic);
         _statusLabel.ForeColor = Color.Silver;
         _statusLabel.BackColor = Color.Transparent;
@@ -253,6 +264,7 @@ public sealed class PlayerForm : Form
         Controls.Add(_artistLabel);
         Controls.Add(_albumLabel);
         Controls.Add(_elapsedLabel);
+        Controls.Add(_remainingLabel);
         Controls.Add(_statusLabel);
         Controls.Add(_playButton);
         Controls.Add(_volumeSlider);
@@ -849,6 +861,7 @@ public sealed class PlayerForm : Form
         if (!_isActive || _trackStartTime is null)
         {
             _elapsedLabel.Text = "";
+            _remainingLabel.Text = "";
             Invalidate(invalidateRect);
             return;
         }
@@ -859,10 +872,19 @@ public sealed class PlayerForm : Form
         {
             _progressEffectiveTotalSeconds = real.TotalSeconds;
             _progressFraction = Math.Clamp(elapsedSeconds / real.TotalSeconds, 0.0, 1.0);
+
+            double remainingSeconds = Math.Max(0, real.TotalSeconds - elapsedSeconds);
+            _remainingLabel.Text = $"-{FormatTime(remainingSeconds)}";
+            int infoWidth2 = ClientSize.Width - InfoLeft - 30;
+            _remainingLabel.Location = new Point(InfoLeft + infoWidth2 - _remainingLabel.PreferredWidth, TimeLabelsTop);
         }
         else
         {
+            // Fake curve, no real duration known - showing a countdown
+            // against a made-up total would be misleading, not just
+            // decorative, so leave it blank rather than guessing.
             (_progressFraction, _progressEffectiveTotalSeconds) = ComputeFakeProgress(elapsedSeconds);
+            _remainingLabel.Text = "";
         }
 
         _elapsedLabel.Text = FormatTime(elapsedSeconds);
