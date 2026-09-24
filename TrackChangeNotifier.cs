@@ -79,7 +79,7 @@ public sealed class TrackChangeNotifier
             {
                 MessageBox.Show(
                     $"Couldn't show a test notification:\n\n{ex.Message}",
-                    "SomaFM Metal Detector Player",
+                    "Metal Detector",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);
             }

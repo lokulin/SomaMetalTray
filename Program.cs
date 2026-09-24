@@ -39,8 +39,8 @@ internal static class Program
         if (!isNewInstance)
         {
             MessageBox.Show(
-                "SomaFM Metal Detector Player is already running - check your system tray.",
-                "SomaFM Metal Detector Player",
+                "Metal Detector is already running - check your system tray.",
+                "Metal Detector",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
             return;

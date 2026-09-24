@@ -37,7 +37,7 @@ public sealed class TrayAppContext : ApplicationContext
         _trayIcon = new NotifyIcon
         {
             Icon = _idleTrayIcon,
-            Text = "SomaFM Metal Detector Player",
+            Text = "Metal Detector",
             ContextMenuStrip = BuildContextMenu(),
             Visible = true
         };

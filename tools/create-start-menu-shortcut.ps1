@@ -1,8 +1,8 @@
 <#
     .SYNOPSIS
-    Creates a Start Menu shortcut for SomaFM Metal Detector Player with its
-    AppUserModelID (AUMID) property set, so Windows can show "SomaFM Metal
-    Detector Player" (instead of "Unknown app") as the source in the volume
+    Creates a Start Menu shortcut for Metal Detector with its
+    AppUserModelID (AUMID) property set, so Windows can show "Metal
+    Detector" (instead of "Unknown app") as the source in the volume
     mixer / media flyout, notifications, etc.
 
     .WHY
@@ -28,7 +28,7 @@ param(
 
     # Must match AppUserModelId in Program.cs - change both together if you rename the app.
     [string]$AppId = "TerraEclectic.SomaMetalTray.v1",
-    [string]$AppName = "SomaFM Metal Detector Player"
+    [string]$AppName = "Metal Detector"
 )
 
 if (-not (Test-Path $ExePath)) {

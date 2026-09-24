@@ -73,7 +73,7 @@ public sealed class DiscordPresenceService : IDisposable
             presence.Assets = new Assets
             {
                 LargeImageKey = imageKey,
-                LargeImageText = "SomaFM Metal Detector",
+                LargeImageText = "Metal Detector",
             };
         }
 

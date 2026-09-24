@@ -130,7 +130,7 @@ public sealed class PlayerForm : Form
         _discord = new DiscordPresenceService(settings);
         _discord.Start();
 
-        Text = "SomaFM Metal Detector Player";
+        Text = "Metal Detector";
 
         var size = new Size(900, WindowHeight);
         MinimumSize = size;
@@ -963,7 +963,7 @@ public sealed class PlayerForm : Form
             MessageBox.Show(
                 "Add a Last.fm API key and secret in Settings first " +
                 "(get one free at last.fm/api/account/create), then try again.",
-                "SomaFM Metal Detector Player",
+                "Metal Detector",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
             return;
@@ -990,7 +990,7 @@ public sealed class PlayerForm : Form
 
             MessageBox.Show(
                 $"Connected to Last.fm as {username}.",
-                "SomaFM Metal Detector Player",
+                "Metal Detector",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
         }
@@ -998,7 +998,7 @@ public sealed class PlayerForm : Form
         {
             MessageBox.Show(
                 $"Couldn't connect to Last.fm.\n\nDetails: {ex.Message}",
-                "SomaFM Metal Detector Player",
+                "Metal Detector",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error);
         }

@@ -33,7 +33,7 @@ public sealed class SettingsForm : Form
         _settings = settings;
         _playerForm = playerForm;
 
-        Text = "SomaFM Metal Detector Player Settings";
+        Text = "Metal Detector Settings";
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;

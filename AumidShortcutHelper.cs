@@ -15,8 +15,8 @@ internal static class AumidShortcutHelper
 {
     // Must stay in sync with Program.AppUserModelId.
     private const string AppUserModelId = "TerraEclectic.SomaMetalTray.v1";
-    private const string DisplayName = "SomaFM Metal Detector Player";
-    private const string ShortcutName = "SomaFM Metal Detector Player.lnk";
+    private const string DisplayName = "Metal Detector";
+    private const string ShortcutName = "Metal Detector.lnk";
 
     private static readonly Guid PkeyAppUserModel = new("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3");
     private const int PidAppUserModelId = 5;                       // PKEY_AppUserModel_ID

@@ -16,8 +16,8 @@
     <!-- These flow into the exe's version resource (FileDescription/Product) -
          Windows falls back to reading this for the volume mixer / media flyout
          app name when it can't otherwise resolve a friendly name. -->
-    <AssemblyTitle>SomaFM Metal Detector Player</AssemblyTitle>
-    <Product>SomaFM Metal Detector Player</Product>
+    <AssemblyTitle>Metal Detector</AssemblyTitle>
+    <Product>Metal Detector</Product>
     <Description>A Windows tray player for SomaFM's Metal Detector internet radio channel</Description>
     <Company>Terra Eclectic</Company>
     <Version>0.1.0</Version>
