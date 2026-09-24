@@ -15,6 +15,18 @@ internal static class WindowChromeHelper
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int dwAttribute, ref int pvAttribute, int cbAttribute);
 
+    // DWMWA_BORDER_COLOR (34) was investigated for a seam that appears just
+    // below the title bar on FixedSingle windows - ruled out via a magenta
+    // diagnostic build: that attribute only visibly affects a window's frame
+    // when FormBorderStyle is None (it becomes the whole outline there);
+    // with FixedSingle (what this app actually uses) it has no visible
+    // effect at all, confirmed with SWP_FRAMECHANGED applied too. DWM does
+    // report a genuine 1px DWMWA_VISIBLE_FRAME_BORDER_THICKNESS on both this
+    // app and DeathFmTray (which has no visible seam) identically, so the
+    // seam isn't an "extra" element any DWM attribute here controls - still
+    // unresolved; see the WindowChromeHelper.cs files in this repo and in
+    // DeathFmTray for the two configurations being compared.
+
     public static void ApplyDarkTitleBar(Form form, Color captionColor, Color textColor)
     {
         if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17763))
@@ -30,14 +42,6 @@ internal static class WindowChromeHelper
 
         int textColorRef = ToColorRef(textColor);
         DwmSetWindowAttribute(hwnd, DwmwaTextColor, ref textColorRef, sizeof(int));
-
-        // Deliberately not also setting DWMWA_BORDER_COLOR here: a previous
-        // attempt at that (to match a separate 1px Windows 11 frame colour to
-        // the caption) turned out to be the actual cause of a visible seam
-        // right below the title bar, not a fix for one - DeathFmTray, which
-        // has no such seam, never sets it either. Left at its default,
-        // Windows blends the frame with the caption colour correctly on its
-        // own; explicitly setting it is what introduced the mismatch.
     }
 
     // Win32 COLORREF is 0x00BBGGRR.
