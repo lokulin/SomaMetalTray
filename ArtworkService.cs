@@ -26,10 +26,18 @@ namespace SomaMetalTray;
 ///   2. Deezer - no auth needed, free-text search, this is the workhorse in
 ///      practice (broad catalog, no key to configure, no MusicBrainz
 ///      round-trip first).
-///   3. iTunes - the original plan, kept as a last-resort fallback since it
-///      tops out at a lower resolution than the other two and has the
-///      weakest coverage of underground metal of the three.
-///   4. The station's own logo (metal512.png), if all three come back empty.
+///   3. Bandcamp - a lot of this station's more obscure/underground bands are
+///      only on Bandcamp, not covered by fanart.tv/Deezer/iTunes at all.
+///      Bandcamp has no official public API; this uses the same undocumented
+///      autocomplete endpoint their own site search box calls
+///      (bcsearch_public_api/1/autocomplete_elastic). Unverified against a
+///      live response as of writing (see the method below) - implemented
+///      defensively so any unexpected shape/status just falls through to the
+///      next source, same as every other source here.
+///   4. iTunes - kept as a last-resort fallback since it tops out at a lower
+///      resolution than the others and has the weakest coverage of
+///      underground metal of the bunch.
+///   5. The station's own logo (metal512.png), if all four come back empty.
 ///
 /// iTunes/MusicBrainz/fanart.tv all have informal or explicit rate limits
 /// (MusicBrainz: 1 req/sec, enforced below), and a large share of the artists
@@ -126,6 +134,7 @@ public sealed class ArtworkService : IDisposable
 
             Image? fetched = await TryFetchFromFanArtTvAsync(artist, title, album, ct)
                 ?? await TryFetchFromDeezerAsync(artist, title, ct)
+                ?? await TryFetchFromBandcampAsync(artist, title, ct)
                 ?? await TryFetchFromItunesAsync(artist, title, ct);
 
             var entry = new CacheEntry(fetched, DateTimeOffset.UtcNow);
@@ -309,7 +318,112 @@ public sealed class ArtworkService : IDisposable
         }
     }
 
-    // --- Source 3: iTunes (last resort - lower res, weakest underground-metal coverage of the three) ---
+    // --- Source 3: Bandcamp (undocumented autocomplete endpoint - unverified, fails soft) ---
+
+    // NOTE: this endpoint/response shape could not be confirmed against a live
+    // response while writing this (every attempt from the dev sandbox came
+    // back 403, which looks like an IP/bot block rather than the endpoint
+    // being wrong - Bandcamp is known to be aggressive about that from
+    // datacenter IPs). The request shape below matches what Bandcamp's own
+    // site search box is widely documented (informally) to call. Needs a
+    // real test from a residential/user IP to confirm the JSON field names
+    // guessed at below (art_id / cover image URL construction) actually match
+    // - until then this should safely no-op (fall through to iTunes) rather
+    // than throw if any of those guesses are wrong.
+    private async Task<Image?> TryFetchFromBandcampAsync(string artist, string title, CancellationToken ct)
+    {
+        try
+        {
+            string searchText = $"{artist} {title}";
+            var payload = new
+            {
+                search_text = searchText,
+                search_filter = "",
+                full_page = false,
+                fan_id = (string?)null,
+            };
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, "https://bandcamp.com/api/bcsearch_public_api/1/autocomplete_elastic")
+            {
+                Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"),
+            };
+            // Bandcamp's undocumented search API is known to reject requests
+            // that don't look like they came from a real browser hitting the
+            // search page - a plain HttpClient UA/no-referer combo gets
+            // blocked outright regardless of query correctness.
+            request.Headers.TryAddWithoutValidation("User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+            request.Headers.Referrer = new Uri("https://bandcamp.com/search");
+
+            using HttpResponseMessage response = await _http.SendAsync(request, ct);
+            if (!response.IsSuccessStatusCode)
+                return null; // Includes a bot-block 403 - just fall through to iTunes.
+
+            using JsonDocument doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+            if (!doc.RootElement.TryGetProperty("auto", out JsonElement auto) ||
+                !auto.TryGetProperty("results", out JsonElement results) ||
+                results.ValueKind != JsonValueKind.Array || results.GetArrayLength() == 0)
+            {
+                return null;
+            }
+
+            foreach (JsonElement result in results.EnumerateArray())
+            {
+                // Only care about track/album results, not artist/label/fan entries.
+                string? type = result.TryGetProperty("type", out JsonElement typeEl) ? typeEl.GetString() : null;
+                if (type is not ("t" or "a"))
+                    continue;
+
+                string? coverUrl = TryBuildBandcampArtUrl(result);
+                if (string.IsNullOrEmpty(coverUrl))
+                    continue;
+
+                byte[] bytes = await _http.GetByteArrayAsync(coverUrl, ct);
+                using var ms = new MemoryStream(bytes);
+                return Image.FromStream(ms);
+            }
+
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    // Bandcamp's search results have historically exposed art either as a
+    // ready-made image URL, or as a numeric "art_id" that has to be formatted
+    // into their static CDN's f4.bcbits.com/img/a<art_id>_10.jpg convention
+    // (the "_10" suffix selects a large-ish square crop) - try both shapes
+    // defensively since this is unverified against a live response.
+    private static string? TryBuildBandcampArtUrl(JsonElement result)
+    {
+        foreach (string directField in new[] { "art_url", "cover_url", "image_url", "art" })
+        {
+            if (result.TryGetProperty(directField, out JsonElement direct) && direct.ValueKind == JsonValueKind.String)
+            {
+                string? url = direct.GetString();
+                if (!string.IsNullOrEmpty(url))
+                    return url;
+            }
+        }
+
+        if (result.TryGetProperty("art_id", out JsonElement artIdEl))
+        {
+            string? artId = artIdEl.ValueKind switch
+            {
+                JsonValueKind.Number => artIdEl.GetRawText(),
+                JsonValueKind.String => artIdEl.GetString(),
+                _ => null,
+            };
+            if (!string.IsNullOrEmpty(artId))
+                return $"https://f4.bcbits.com/img/a{artId}_10.jpg";
+        }
+
+        return null;
+    }
+
+    // --- Source 4: iTunes (last resort - lower res, weakest underground-metal coverage of the four) ---
 
     private async Task<Image?> TryFetchFromItunesAsync(string artist, string title, CancellationToken ct)
     {

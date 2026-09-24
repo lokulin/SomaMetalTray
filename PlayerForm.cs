@@ -15,23 +15,48 @@ namespace SomaMetalTray;
 /// Main window: a custom-painted WinForms shell (no WebView2/browser involved -
 /// see AudioPlayerService for direct stream playback) styled after the
 /// Death.FM web player / DeathFmAndroid's portrait layout / DeathFmCastReceiver:
-/// album art with a reflection on the left, over a dark gradient background,
-/// track info on the right, play/stop + volume underneath. Closing the window
-/// hides it to the tray instead of exiting (configurable); the tray icon is
-/// what actually owns app lifetime.
+/// album art with a reflection on the left, over a dark-to-red gradient
+/// background, track info on the right, custom Play/Stop + volume controls
+/// underneath, and a cosmetic ever-creeping progress bar (there's no real
+/// track-duration API - see ComputeFakeProgress). Closing the window hides it
+/// to the tray instead of exiting (configurable); the tray icon is what
+/// actually owns app lifetime.
 /// </summary>
 public sealed class PlayerForm : Form
 {
     // Matches the death.fm/DeathFmAndroid palette family - near-black fading
-    // to a dark red, "metal-appropriate" per the brief. Refine in a v2 pass.
+    // to a dark red glow concentrated toward the bottom edge.
     private static readonly Color GradientTop = Color.FromArgb(0x12, 0x10, 0x10);
     private static readonly Color GradientBottom = Color.FromArgb(0x3a, 0x0c, 0x0c);
+    private static readonly Color GlowCore = Color.FromArgb(0xb5, 0x1f, 0x1f);
     private static readonly Color AccentColor = Color.FromArgb(0xc0, 0x30, 0x30);
 
-    private const int ArtSize = 260;
+    private const int ArtSize = 300;
+    private const int ArtCornerRadius = 5;
     private const int ArtMarginLeft = 30;
-    private const int ArtMarginTop = 70;
+    private const int ArtMarginTop = 80;
     private const int ReflectionHeight = 90;
+
+    private const int InfoLeft = ArtMarginLeft + ArtSize + 30; // 360
+    private const int TitleTop = ArtMarginTop;                 // 80
+    private const int ArtistTop = TitleTop + 68;                // 148
+    private const int AlbumTop = ArtistTop + 32;                 // 180
+    private const int ProgressTop = AlbumTop + 34;               // 214
+    private const int ProgressHeight = 10;
+    private const int TimeLabelsTop = ProgressTop + ProgressHeight + 6; // 230
+    private const int StatusTop = TimeLabelsTop + 18 + 4;        // 252
+    private const int ControlsTop = StatusTop + 18 + 10;         // 280
+
+    private const int LivePillWidth = 130;
+    private const int LivePillHeight = 36;
+
+    // Fake progress model (see ComputeFakeProgress): a 5-minute baseline, then
+    // a halve-the-remaining-distance/double-the-segment-duration curve that
+    // approaches but never reaches 100% - purely cosmetic, there's no real
+    // per-track duration API for this station.
+    private const double BaselineTotalSeconds = 300.0;
+    private const double BaselineRampSeconds = 240.0;
+    private const double BaselineRampFraction = 0.8;
 
     private readonly AppSettings _settings;
     private readonly SomaFmService _somaFm;
@@ -45,15 +70,28 @@ public sealed class PlayerForm : Form
     private readonly Label _titleLabel = new();
     private readonly Label _artistLabel = new();
     private readonly Label _albumLabel = new();
-    private readonly Button _playStopButton = new();
-    private readonly TrackBar _volumeSlider = new();
-    private readonly Label _volumeLabel = new();
+    private readonly Label _elapsedLabel = new();
+    private readonly Label _remainingLabel = new();
+    private readonly Label _statusLabel = new();
+    private readonly SquareStopButton _stopButton = new();
+    private readonly CirclePlayButton _playButton = new();
+    private readonly VolumeSliderControl _volumeSlider = new();
+
+    private readonly System.Windows.Forms.Timer _uiTimer = new() { Interval = 100 };
+    private int _uiTimerTicks;
 
     private SmtcService? _smtc;
     private Icon? _formIcon;
+    private Bitmap? _pillIcon; // small round copy of _formIcon for the LIVE pill
     private bool _allowClose;
-    private bool _isPlaying;
+    private bool _isPlaying;   // true only while real audio is flowing (PlaybackState.Playing)
+    private bool _isActive;    // true whenever the user hasn't stopped playback (Playing or Buffering) - drives the toggle button/progress bar
     private TrackMetadata? _lastMetadata;
+
+    private DateTimeOffset? _trackStartTime;
+    private double _progressFraction;
+    private double _progressEffectiveTotalSeconds;
+    private double _pulseAlpha = 255;
 
     private Image? _currentArt;       // owned by ArtworkService - never dispose this one
     private Bitmap? _currentReflection; // owned by us - dispose on replace
@@ -88,7 +126,7 @@ public sealed class PlayerForm : Form
 
         Text = "SomaFM Metal Detector Player";
 
-        var size = new Size(720, 470);
+        var size = new Size(900, 520);
         MinimumSize = size;
         MaximumSize = size;
         ClientSize = size;
@@ -107,6 +145,12 @@ public sealed class PlayerForm : Form
 
         TrySetIcon();
 
+        // WindowChromeHelper's native dark title bar already colors the caption
+        // to match GradientTop, which is as close as the DWM caption-color API
+        // lets a standard (non-custom-drawn) titlebar blend into a gradient
+        // background - going further (fully custom-painted borderless chrome)
+        // would mean reimplementing drag/resize/system-menu hit-testing from
+        // scratch, which isn't worth the risk for this pass.
         HandleCreated += (_, _) => WindowChromeHelper.ApplyDarkTitleBar(this, GradientTop, Color.White);
         HandleCreated += (_, _) => BuildSystemMenu();
 
@@ -120,6 +164,9 @@ public sealed class PlayerForm : Form
         _somaFm.StationInfoLoaded += OnStationInfoLoaded;
         _audio.PlaybackStateChanged += OnAudioPlaybackStateChanged;
 
+        _uiTimer.Tick += OnUiTimerTick;
+        _uiTimer.Start();
+
         _trackChangeNotifier.OnPlaybackStateChanged(PlaybackState.Stopped);
     }
 
@@ -130,63 +177,75 @@ public sealed class PlayerForm : Form
         _stationLabel.ForeColor = Color.Gainsboro;
         _stationLabel.BackColor = Color.Transparent;
         _stationLabel.AutoSize = true;
-        _stationLabel.Location = new Point(ArtMarginLeft, 20);
+        _stationLabel.Location = new Point(ArtMarginLeft, 12);
 
-        int infoLeft = ArtMarginLeft + ArtSize + 30;
-        int infoWidth = ClientSize.Width - infoLeft - 30;
+        int infoWidth = ClientSize.Width - InfoLeft - 30;
 
         _titleLabel.Text = "Loading...";
-        _titleLabel.Font = new Font("Segoe UI", 16f, FontStyle.Bold);
+        _titleLabel.Font = new Font("Segoe UI", 20f, FontStyle.Bold);
         _titleLabel.ForeColor = Color.White;
         _titleLabel.BackColor = Color.Transparent;
         _titleLabel.AutoEllipsis = true;
-        _titleLabel.Location = new Point(infoLeft, ArtMarginTop + 10);
-        _titleLabel.Size = new Size(infoWidth, 60);
+        _titleLabel.Location = new Point(InfoLeft, TitleTop);
+        _titleLabel.Size = new Size(infoWidth, 64);
 
-        _artistLabel.Font = new Font("Segoe UI", 12f, FontStyle.Regular);
+        _artistLabel.Font = new Font("Segoe UI", 13f, FontStyle.Regular);
         _artistLabel.ForeColor = Color.Gainsboro;
         _artistLabel.BackColor = Color.Transparent;
         _artistLabel.AutoEllipsis = true;
-        _artistLabel.Location = new Point(infoLeft, ArtMarginTop + 75);
-        _artistLabel.Size = new Size(infoWidth, 30);
+        _artistLabel.Location = new Point(InfoLeft, ArtistTop);
+        _artistLabel.Size = new Size(infoWidth, 28);
 
         _albumLabel.Font = new Font("Segoe UI", 10f, FontStyle.Italic);
         _albumLabel.ForeColor = Color.Silver;
         _albumLabel.BackColor = Color.Transparent;
         _albumLabel.AutoEllipsis = true;
-        _albumLabel.Location = new Point(infoLeft, ArtMarginTop + 110);
-        _albumLabel.Size = new Size(infoWidth, 30);
+        _albumLabel.Location = new Point(InfoLeft, AlbumTop);
+        _albumLabel.Size = new Size(infoWidth, 24);
 
-        _playStopButton.Text = "▶  Play";
-        _playStopButton.FlatStyle = FlatStyle.Flat;
-        _playStopButton.FlatAppearance.BorderColor = AccentColor;
-        _playStopButton.BackColor = Color.FromArgb(0x28, 0x10, 0x10);
-        _playStopButton.ForeColor = Color.White;
-        _playStopButton.Font = new Font("Segoe UI", 11f, FontStyle.Bold);
-        _playStopButton.Size = new Size(140, 44);
-        _playStopButton.Location = new Point(ArtMarginLeft, ClientSize.Height - 70);
-        _playStopButton.Click += (_, _) => TogglePlayback();
+        _elapsedLabel.Font = new Font("Segoe UI", 8f);
+        _elapsedLabel.ForeColor = Color.Gainsboro;
+        _elapsedLabel.BackColor = Color.Transparent;
+        _elapsedLabel.AutoSize = true;
+        _elapsedLabel.Location = new Point(InfoLeft, TimeLabelsTop);
+        _elapsedLabel.Text = "";
 
-        _volumeLabel.Text = "Volume";
-        _volumeLabel.ForeColor = Color.Gainsboro;
-        _volumeLabel.BackColor = Color.Transparent;
-        _volumeLabel.AutoSize = true;
-        _volumeLabel.Location = new Point(ArtMarginLeft + 160, ClientSize.Height - 68);
+        _remainingLabel.Font = new Font("Segoe UI", 8f);
+        _remainingLabel.ForeColor = Color.Gainsboro;
+        _remainingLabel.BackColor = Color.Transparent;
+        _remainingLabel.AutoSize = true;
+        _remainingLabel.Text = "";
+        _remainingLabel.TextAlign = ContentAlignment.MiddleRight;
+        _remainingLabel.Location = new Point(InfoLeft + infoWidth - 40, TimeLabelsTop);
 
-        _volumeSlider.Minimum = 0;
-        _volumeSlider.Maximum = 100;
-        _volumeSlider.TickFrequency = 10;
-        _volumeSlider.Value = (int)Math.Round(Math.Clamp(_settings.Volume ?? 0.8, 0.0, 1.0) * 100);
-        _volumeSlider.Size = new Size(220, 45);
-        _volumeSlider.Location = new Point(ArtMarginLeft + 160, ClientSize.Height - 55);
-        _volumeSlider.Scroll += (_, _) => _audio.Volume = _volumeSlider.Value / 100.0;
+        _statusLabel.Font = new Font("Segoe UI", 8f, FontStyle.Italic);
+        _statusLabel.ForeColor = Color.Silver;
+        _statusLabel.BackColor = Color.Transparent;
+        _statusLabel.AutoSize = true;
+        _statusLabel.Location = new Point(InfoLeft, StatusTop);
+        _statusLabel.Text = "";
+
+        _stopButton.Location = new Point(InfoLeft, ControlsTop);
+        _stopButton.Clicked += (_, _) => _audio.Stop();
+
+        _playButton.Location = new Point(InfoLeft + 70, ControlsTop - 15);
+        _playButton.Toggled += (_, _) => TogglePlayback();
+
+        int volumeLeft = InfoLeft + 70 + 80 + 40;
+        _volumeSlider.Location = new Point(volumeLeft, ControlsTop + 15);
+        _volumeSlider.Size = new Size(ClientSize.Width - 30 - volumeLeft, 20);
+        _volumeSlider.Value = Math.Clamp(_settings.Volume ?? 0.8, 0.0, 1.0);
+        _volumeSlider.ValueChanged += (_, _) => _audio.Volume = _volumeSlider.Value;
 
         Controls.Add(_stationLabel);
         Controls.Add(_titleLabel);
         Controls.Add(_artistLabel);
         Controls.Add(_albumLabel);
-        Controls.Add(_playStopButton);
-        Controls.Add(_volumeLabel);
+        Controls.Add(_elapsedLabel);
+        Controls.Add(_remainingLabel);
+        Controls.Add(_statusLabel);
+        Controls.Add(_stopButton);
+        Controls.Add(_playButton);
         Controls.Add(_volumeSlider);
     }
 
@@ -197,32 +256,181 @@ public sealed class PlayerForm : Form
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.InterpolationMode = InterpolationMode.HighQualityBicubic;
 
-        using (var backgroundBrush = new LinearGradientBrush(ClientRectangle, GradientTop, GradientBottom, LinearGradientMode.Vertical))
-        {
-            g.FillRectangle(backgroundBrush, ClientRectangle);
-        }
+        DrawBackground(g);
 
         var artRect = new Rectangle(ArtMarginLeft, ArtMarginTop, ArtSize, ArtSize);
-
-        if (_currentArt is not null)
-        {
-            g.DrawImage(_currentArt, artRect);
-        }
-        else
-        {
-            using var placeholderBrush = new SolidBrush(Color.FromArgb(0x20, 0x20, 0x20));
-            g.FillRectangle(placeholderBrush, artRect);
-        }
-
-        using (var borderPen = new Pen(Color.FromArgb(80, Color.White), 1f))
-        {
-            g.DrawRectangle(borderPen, artRect);
-        }
+        DrawRoundedImage(g, artRect, _currentArt, ArtCornerRadius, Color.FromArgb(0x20, 0x20, 0x20));
+        DrawRoundedBorder(g, artRect, ArtCornerRadius, Color.FromArgb(80, Color.White), 1f);
 
         if (_currentReflection is not null)
         {
-            g.DrawImage(_currentReflection, new Rectangle(ArtMarginLeft, artRect.Bottom + 2, ArtSize, ReflectionHeight));
+            var reflectionRect = new Rectangle(ArtMarginLeft, artRect.Bottom + 2, ArtSize, ReflectionHeight);
+            DrawRoundedImage(g, reflectionRect, _currentReflection, ArtCornerRadius, null);
         }
+
+        DrawLivePill(g);
+        DrawProgressBar(g);
+        DrawSpeakerIcon(g);
+    }
+
+    private void DrawBackground(Graphics g)
+    {
+        using (var baseBrush = new LinearGradientBrush(ClientRectangle, GradientTop, GradientBottom, LinearGradientMode.Vertical))
+        {
+            g.FillRectangle(baseBrush, ClientRectangle);
+        }
+
+        // Warm radial-ish glow bleeding up from the bottom edge - centered
+        // below the window so only its upper arc shows within the client
+        // area, concentrating the brightest point at bottom-center/right and
+        // fading to near-black toward the top and corners.
+        int cx = (int)(Width * 0.62);
+        int cy = Height + (int)(Height * 0.15);
+        int rx = (int)(Width * 0.95);
+        int ry = (int)(Height * 0.95);
+        var glowRect = new Rectangle(cx - rx, cy - ry, rx * 2, ry * 2);
+
+        using var glowPath = new GraphicsPath();
+        glowPath.AddEllipse(glowRect);
+        using var glowBrush = new PathGradientBrush(glowPath)
+        {
+            CenterColor = Color.FromArgb(150, GlowCore),
+            SurroundColors = new[] { Color.FromArgb(0, GlowCore) },
+        };
+        g.FillPath(glowBrush, glowPath);
+    }
+
+    private static void DrawRoundedImage(Graphics g, Rectangle rect, Image? image, int radius, Color? placeholderColor)
+    {
+        using GraphicsPath path = RoundedRectPath(rect, radius);
+        Region oldClip = g.Clip;
+        g.SetClip(path, CombineMode.Intersect);
+        try
+        {
+            if (image is not null)
+                g.DrawImage(image, rect);
+            else if (placeholderColor is Color pc)
+                using (var b = new SolidBrush(pc))
+                    g.FillRectangle(b, rect);
+        }
+        finally
+        {
+            g.Clip = oldClip;
+            oldClip.Dispose();
+        }
+    }
+
+    private static void DrawRoundedBorder(Graphics g, Rectangle rect, int radius, Color color, float width)
+    {
+        using GraphicsPath path = RoundedRectPath(rect, radius);
+        using var pen = new Pen(color, width);
+        g.DrawPath(pen, path);
+    }
+
+    private static GraphicsPath RoundedRectPath(Rectangle rect, int radius)
+    {
+        int d = radius * 2;
+        var path = new GraphicsPath();
+        path.AddArc(rect.X, rect.Y, d, d, 180, 90);
+        path.AddArc(rect.Right - d, rect.Y, d, d, 270, 90);
+        path.AddArc(rect.Right - d, rect.Bottom - d, d, d, 0, 90);
+        path.AddArc(rect.X, rect.Bottom - d, d, d, 90, 90);
+        path.CloseFigure();
+        return path;
+    }
+
+    private Rectangle LivePillRect => new(ClientSize.Width - 30 - LivePillWidth, 16, LivePillWidth, LivePillHeight);
+
+    private void DrawLivePill(Graphics g)
+    {
+        Rectangle pillRect = LivePillRect;
+        int radius = LivePillHeight / 2;
+
+        using (GraphicsPath pillPath = RoundedRectPath(pillRect, radius))
+        {
+            using (var fill = new SolidBrush(Color.FromArgb(60, 0x40, 0x08, 0x08)))
+                g.FillPath(fill, pillPath);
+            using (var border = new Pen(AccentColor, 1f))
+                g.DrawPath(border, pillPath);
+        }
+
+        int iconSize = 20;
+        var iconRect = new Rectangle(pillRect.X + 8, pillRect.Y + (pillRect.Height - iconSize) / 2, iconSize, iconSize);
+        if (_pillIcon is not null)
+        {
+            using GraphicsPath clip = new();
+            clip.AddEllipse(iconRect);
+            Region oldClip = g.Clip;
+            g.SetClip(clip, CombineMode.Intersect);
+            g.DrawImage(_pillIcon, iconRect);
+            g.Clip = oldClip;
+            oldClip.Dispose();
+        }
+
+        int dotSize = 8;
+        var dotRect = new Rectangle(iconRect.Right + 8, pillRect.Y + (pillRect.Height - dotSize) / 2, dotSize, dotSize);
+        using (var dotBrush = new SolidBrush(Color.FromArgb((int)_pulseAlpha, AccentColor)))
+            g.FillEllipse(dotBrush, dotRect);
+
+        using var textBrush = new SolidBrush(AccentColor);
+        using var font = new Font("Segoe UI", 10f, FontStyle.Bold);
+        var textRect = new Rectangle(dotRect.Right + 6, pillRect.Y, pillRect.Right - (dotRect.Right + 6) - 6, pillRect.Height);
+        using var format = new StringFormat { LineAlignment = StringAlignment.Center, Alignment = StringAlignment.Near };
+        g.DrawString("LIVE", font, textBrush, textRect, format);
+    }
+
+    private void DrawProgressBar(Graphics g)
+    {
+        if (!_isActive || _trackStartTime is null)
+            return;
+
+        int infoWidth = ClientSize.Width - InfoLeft - 30;
+        var barRect = new Rectangle(InfoLeft, ProgressTop, infoWidth, ProgressHeight);
+
+        using (GraphicsPath trackPath = RoundedRectPath(barRect, ProgressHeight / 2))
+        {
+            using var trackBrush = new SolidBrush(Color.FromArgb(0x2a, 0x22, 0x22));
+            g.FillPath(trackBrush, trackPath);
+        }
+
+        int filledWidth = (int)(infoWidth * _progressFraction);
+        if (filledWidth > 0)
+        {
+            var filledRect = new Rectangle(InfoLeft, ProgressTop, Math.Max(ProgressHeight, filledWidth), ProgressHeight);
+            using GraphicsPath filledPath = RoundedRectPath(filledRect, ProgressHeight / 2);
+            using var filledBrush = new SolidBrush(AccentColor);
+            g.FillPath(filledBrush, filledPath);
+        }
+
+        int thumbDiameter = ProgressHeight + 4;
+        int thumbX = InfoLeft + Math.Clamp(filledWidth - thumbDiameter / 2, 0, infoWidth - thumbDiameter);
+        var thumbRect = new Rectangle(thumbX, ProgressTop - 2, thumbDiameter, thumbDiameter);
+        using (var thumbBrush = new SolidBrush(Color.White))
+            g.FillEllipse(thumbBrush, thumbRect);
+    }
+
+    private void DrawSpeakerIcon(Graphics g)
+    {
+        int volumeLeft = InfoLeft + 70 + 80 + 40;
+        var rect = new Rectangle(volumeLeft - 30, ControlsTop + 13, 20, 24);
+
+        using var brush = new SolidBrush(Color.Gainsboro);
+        // Speaker body: a small rectangle plus a triangle "horn", a compact
+        // hand-drawn glyph rather than pulling in an icon font/resource.
+        var body = new Rectangle(rect.X, rect.Y + 7, 6, 10);
+        g.FillRectangle(brush, body);
+
+        var horn = new[]
+        {
+            new Point(rect.X + 6, rect.Y + 7),
+            new Point(rect.X + 12, rect.Y + 2),
+            new Point(rect.X + 12, rect.Y + 22),
+            new Point(rect.X + 6, rect.Y + 17),
+        };
+        g.FillPolygon(brush, horn);
+
+        using var pen = new Pen(Color.Gainsboro, 1.5f);
+        g.DrawArc(pen, rect.X + 13, rect.Y + 5, 8, 14, -50, 100);
     }
 
     private async void PlayerForm_Load(object? sender, EventArgs e)
@@ -271,6 +479,13 @@ public sealed class PlayerForm : Form
             _titleLabel.Text = metadata.Title;
             _artistLabel.Text = metadata.Artist;
             _albumLabel.Text = metadata.Album;
+
+            // SomaFmService already dedupes by track identity, so any
+            // MetadataChanged event here means a genuinely new track -
+            // always reset the fake-progress elapsed-time basis, never
+            // continue accumulating from the previous track's start time.
+            _trackStartTime = metadata.StartedAt ?? DateTimeOffset.UtcNow;
+            UpdateProgress();
 
             _smtc?.UpdateMetadata(metadata.Title, metadata.Artist, metadata.Album, metadata.ArtUrl);
             _trackChangeNotifier.OnMetadataChanged(metadata);
@@ -373,7 +588,7 @@ public sealed class PlayerForm : Form
 
     private void TogglePlayback()
     {
-        if (_isPlaying)
+        if (_isActive)
             _audio.Stop();
         else
             _audio.Play();
@@ -390,16 +605,26 @@ public sealed class PlayerForm : Form
         {
             bool wasPlaying = _isPlaying;
             _isPlaying = state == PlaybackState.Playing;
+            _isActive = state != PlaybackState.Stopped;
 
-            _playStopButton.Text = _isPlaying ? "■  Stop" : "▶  Play";
+            _playButton.IsPlaying = _isActive;
+            _statusLabel.Text = state == PlaybackState.Buffering ? "Reconnecting…" : "";
 
-            _smtc?.SetPlaybackStatus(state switch
+            if (!_isActive)
             {
-                PlaybackState.Playing => MediaPlaybackStatus.Playing,
-                PlaybackState.Paused => MediaPlaybackStatus.Paused,
-                PlaybackState.Buffering => MediaPlaybackStatus.Changing,
-                _ => MediaPlaybackStatus.Stopped,
-            });
+                _trackStartTime = null;
+                _progressFraction = 0;
+            }
+
+            // Externally (SMTC/tray icon), playback only ever reports as
+            // Playing or Stopped - never Paused/Buffering/Changing. Buffering
+            // is treated as "still trying to be Playing" for SMTC purposes:
+            // flipping the session to Stopped while merely reconnecting would
+            // leave it unable to be resumed from the flyout, which is exactly
+            // the bug this pass fixes (see AudioPlayerService remarks).
+            _smtc?.SetPlaybackStatus(state == PlaybackState.Stopped
+                ? MediaPlaybackStatus.Stopped
+                : MediaPlaybackStatus.Playing);
 
             _trackChangeNotifier.OnPlaybackStateChanged(state);
 
@@ -419,6 +644,7 @@ public sealed class PlayerForm : Form
                 _discord.OnTrackChanged(current);
             }
 
+            Invalidate();
             PlaybackStateChanged?.Invoke(state);
         }));
     }
@@ -436,11 +662,117 @@ public sealed class PlayerForm : Form
                     break;
                 case SystemMediaTransportControlsButton.Pause:
                 case SystemMediaTransportControlsButton.Stop:
-                    // Live stream, no real "paused" position - Pause and Stop both just stop it.
+                    // Live stream, no real "paused" position - Pause and Stop
+                    // both just stop it. SMTC's Pause button is disabled (see
+                    // SmtcService) but some Windows versions can still send
+                    // one occasionally - handled the same way defensively.
                     _audio.Stop();
                     break;
             }
         }));
+    }
+
+    private void OnUiTimerTick(object? sender, EventArgs e)
+    {
+        _uiTimerTicks++;
+
+        // Pulse the LIVE dot's alpha smoothly (~2.6s period) - a restrained
+        // animation, not distracting, and scoped to just the dot itself.
+        double phase = (_uiTimerTicks * _uiTimer.Interval / 1000.0) * (2 * Math.PI / 2.6);
+        _pulseAlpha = 153 + (255 - 153) * (0.5 + 0.5 * Math.Sin(phase)); // oscillates ~60%-100% alpha
+        Invalidate(LivePillRect);
+
+        // Recompute the fake progress + elapsed/remaining labels roughly once
+        // a second (every 10th 100ms tick) rather than every tick.
+        if (_uiTimerTicks % 10 == 0)
+        {
+            UpdateProgress();
+        }
+    }
+
+    private void UpdateProgress()
+    {
+        if (!_isActive || _trackStartTime is null)
+        {
+            _elapsedLabel.Text = "";
+            _remainingLabel.Text = "";
+            return;
+        }
+
+        double elapsedSeconds = Math.Max(0, (DateTimeOffset.UtcNow - _trackStartTime.Value).TotalSeconds);
+        (_progressFraction, _progressEffectiveTotalSeconds) = ComputeFakeProgress(elapsedSeconds);
+
+        _elapsedLabel.Text = FormatTime(elapsedSeconds);
+        double remaining = Math.Max(0, _progressEffectiveTotalSeconds - elapsedSeconds);
+        _remainingLabel.Text = $"-{FormatTime(remaining)}";
+
+        int infoWidth = ClientSize.Width - InfoLeft - 30;
+        _remainingLabel.Location = new Point(InfoLeft + infoWidth - _remainingLabel.PreferredWidth, TimeLabelsTop);
+
+        Invalidate(new Rectangle(InfoLeft, ProgressTop, infoWidth, ProgressHeight + 4));
+    }
+
+    private static string FormatTime(double totalSeconds)
+    {
+        var span = TimeSpan.FromSeconds(totalSeconds);
+        return span.Hours > 0
+            ? $"{span.Hours}:{span.Minutes:D2}:{span.Seconds:D2}"
+            : $"{span.Minutes}:{span.Seconds:D2}";
+    }
+
+    /// <summary>
+    /// Purely cosmetic, deterministic progress fraction as a function of real
+    /// elapsed seconds since track start - never jumps backward, never
+    /// reaches 100%. There's no real track-duration API for this station, so
+    /// this exists purely to give the progress bar "some visual interest,
+    /// not accuracy" (the user's own framing) rather than sitting static:
+    ///
+    ///   - first 240s (of a 300s baseline): ramps linearly 0.0 -> 0.8
+    ///   - beyond that: each further segment doubles the previous segment's
+    ///     duration while halving the remaining distance to 1.0 (240s: 0.8,
+    ///     +480s: 0.9, +960s: 0.95, +1920s: 0.975, ...), continuing
+    ///     indefinitely - a smooth, continuously-forward, decelerating
+    ///     asymptotic curve that never actually finishes.
+    ///
+    /// Also returns the "effective total duration" implied at this point on
+    /// the curve (segmentStart + segmentDuration of whichever segment
+    /// elapsedSeconds currently falls in), used to derive a "remaining time"
+    /// label that reads sensibly next to the bar without inventing an
+    /// unrelated number.
+    /// </summary>
+    internal static (double Fraction, double EffectiveTotalSeconds) ComputeFakeProgress(double elapsedSeconds)
+    {
+        if (elapsedSeconds <= 0)
+            return (0.0, BaselineTotalSeconds);
+
+        if (elapsedSeconds <= BaselineRampSeconds)
+        {
+            double fraction = (elapsedSeconds / BaselineRampSeconds) * BaselineRampFraction;
+            return (fraction, BaselineTotalSeconds);
+        }
+
+        double segmentStart = BaselineRampSeconds;
+        double segmentDuration = BaselineTotalSeconds - BaselineRampSeconds; // 480s (first post-ramp segment)
+        double fractionStart = BaselineRampFraction;
+        double remainingDistance = 1.0 - BaselineRampFraction; // 0.2
+
+        while (true)
+        {
+            double segmentEnd = segmentStart + segmentDuration;
+            double segmentTargetFraction = fractionStart + remainingDistance / 2.0;
+
+            if (elapsedSeconds <= segmentEnd)
+            {
+                double progressInSegment = (elapsedSeconds - segmentStart) / segmentDuration;
+                double fraction = fractionStart + (segmentTargetFraction - fractionStart) * progressInSegment;
+                return (fraction, segmentEnd);
+            }
+
+            fractionStart = segmentTargetFraction;
+            remainingDistance /= 2.0;
+            segmentStart = segmentEnd;
+            segmentDuration *= 2.0;
+        }
     }
 
     private void TrySetIcon()
@@ -449,6 +781,8 @@ public sealed class PlayerForm : Form
         {
             _formIcon = LoadEmbeddedIcon("app.ico");
             Icon = _formIcon;
+            using Bitmap full = _formIcon.ToBitmap();
+            _pillIcon = new Bitmap(full, new Size(20, 20));
         }
         catch
         {
@@ -663,8 +997,11 @@ public sealed class PlayerForm : Form
     {
         if (disposing)
         {
+            _uiTimer.Stop();
+            _uiTimer.Dispose();
             _artworkCts?.Cancel();
             _currentReflection?.Dispose();
+            _pillIcon?.Dispose();
             _formIcon?.Dispose();
             _smtc?.Dispose();
             _somaFm.Dispose();

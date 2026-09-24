@@ -8,7 +8,14 @@ using Timer = System.Windows.Forms.Timer;
 namespace SomaMetalTray;
 
 /// <summary>Now-playing metadata for the current track, source-agnostic (fed to SMTC/Last.fm/Discord/toasts).</summary>
-public readonly record struct TrackMetadata(string Title, string Artist, string Album, string? ArtUrl);
+/// <param name="StartedAt">
+/// When this track started playing on the station, per SomaFM's "date" field
+/// (a Unix timestamp, seconds), if it parsed successfully - null otherwise.
+/// Used purely for PlayerForm's cosmetic fake progress bar (see
+/// PlayerForm.ComputeFakeProgress); there's no real track-duration API to be
+/// accurate against.
+/// </param>
+public readonly record struct TrackMetadata(string Title, string Artist, string Album, string? ArtUrl, DateTimeOffset? StartedAt = null);
 
 /// <summary>
 /// Polls SomaFM's public "now playing" JSON endpoints for the Metal Detector
@@ -141,7 +148,11 @@ public sealed class SomaFmService : IDisposable
 
             _lastTrackKey = key;
 
-            var metadata = new TrackMetadata(title, artist, album, string.IsNullOrEmpty(art) ? null : art);
+            DateTimeOffset? startedAt = long.TryParse(date, out long unixSeconds)
+                ? DateTimeOffset.FromUnixTimeSeconds(unixSeconds)
+                : null;
+
+            var metadata = new TrackMetadata(title, artist, album, string.IsNullOrEmpty(art) ? null : art, startedAt);
             CurrentTrack = metadata;
             MetadataChanged?.Invoke(metadata);
         }
