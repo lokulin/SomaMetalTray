@@ -83,6 +83,7 @@ public sealed class PlayerForm : Form
     private readonly VolumeSliderControl _volumeSlider = new();
     private readonly TitleBarButton _minimizeButton = new(TitleBarGlyph.Minimize);
     private readonly TitleBarButton _closeButton = new(TitleBarGlyph.Close);
+    private readonly ToolTip _copyToolTip = new();
 
     private readonly System.Windows.Forms.Timer _uiTimer = new() { Interval = 100 };
     private int _uiTimerTicks;
@@ -208,6 +209,15 @@ public sealed class PlayerForm : Form
         _albumLabel.AutoEllipsis = true;
         _albumLabel.Location = new Point(InfoLeft, AlbumTop);
         _albumLabel.Size = new Size(infoWidth, 24);
+
+        // Click title/artist/album to copy the current track info - a small
+        // convenience for pasting it somewhere (chat, a search box, etc.)
+        // without having to retype it by hand.
+        foreach (Label label in new[] { _titleLabel, _artistLabel, _albumLabel })
+        {
+            label.Cursor = Cursors.Hand;
+            label.Click += (_, _) => CopyTrackInfoToClipboard(label);
+        }
 
         _elapsedLabel.Font = new Font("Segoe UI", 8f);
         _elapsedLabel.ForeColor = Color.Gainsboro;
@@ -676,6 +686,28 @@ public sealed class PlayerForm : Form
             _audio.Play();
     }
 
+    private void CopyTrackInfoToClipboard(Control anchor)
+    {
+        if (_lastMetadata is not TrackMetadata metadata)
+            return;
+
+        string text = $"{metadata.Title} — {metadata.Artist} — {metadata.Album}";
+
+        try
+        {
+            Clipboard.SetText(text);
+        }
+        catch (Exception ex)
+        {
+            // Clipboard access can transiently fail (another app briefly
+            // holding it) - not worth surfacing as an error to the user.
+            Debug.WriteLine($"CopyTrackInfoToClipboard failed: {ex.Message}");
+            return;
+        }
+
+        _copyToolTip.Show("Copied to clipboard", anchor, anchor.Width / 2, -22, 1200);
+    }
+
     // AudioPlayerService may raise this from a background (MTA) thread - the
     // same caveat SmtcService.ButtonPressed carries - so always marshal back
     // to the UI thread before touching any control.
@@ -1094,6 +1126,7 @@ public sealed class PlayerForm : Form
         {
             _uiTimer.Stop();
             _uiTimer.Dispose();
+            _copyToolTip.Dispose();
             _artworkCts?.Cancel();
             _currentReflection?.Dispose();
             _formIcon?.Dispose();

@@ -37,6 +37,11 @@ notifications on track change, start-at-startup, and minimize-to-tray.
 - A purely cosmetic, ever-creeping progress bar, since there's no real
   per-track duration available anywhere for a live radio stream (see
   `PlayerForm.ComputeFakeProgress`).
+- Click the title, artist, or album text to copy the current track info
+  ("Title — Artist — Album") to the clipboard.
+- Clears this app's own stale entries from the Windows Notification Center
+  on every launch, rather than letting old track-change toasts pile up
+  indefinitely.
 
 ## Custom borderless window chrome
 
