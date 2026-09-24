@@ -141,6 +141,13 @@ public sealed class AudioPlayerService : IDisposable
                 AutoPlay = false,
                 Volume = _volume,
             };
+            // MediaPlayer auto-registers its own System Media Transport
+            // Controls session by default (separate from the one SmtcService
+            // manages via GetForWindow) - left enabled, Windows' media flyout
+            // shows a second, unbranded entry (just the app's AUMID as its
+            // title, no metadata/art) alongside our real one. We only ever
+            // want the one SmtcService drives.
+            player.CommandManager.IsEnabled = false;
             player.MediaFailed += OnMediaFailed;
             player.PlaybackSession.PlaybackStateChanged += OnPlaybackSessionStateChanged;
             _player = player;

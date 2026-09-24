@@ -22,7 +22,7 @@ internal static class UiColors
     public static readonly Color TrackDark = Color.FromArgb(0x2a, 0x22, 0x22);
 }
 
-/// <summary>Large circular Play/Pause-style toggle button (~80px).</summary>
+/// <summary>Large circular Play/Stop toggle button (~80px) - the sole playback control.</summary>
 internal sealed class CirclePlayButton : Control
 {
     private bool _hover;
@@ -83,16 +83,13 @@ internal sealed class CirclePlayButton : Control
         using var glyphBrush = new SolidBrush(Color.White);
         if (_isPlaying)
         {
-            // Pause-style "II" glyph - purely a "click to toggle" convention,
-            // not implying a real pause capability (see AudioPlayerService remarks).
-            int barWidth = Math.Max(4, Width / 10);
-            int barHeight = Height / 3;
-            int gap = barWidth;
-            int totalWidth = barWidth * 2 + gap;
-            int startX = (Width - totalWidth) / 2;
-            int y = (Height - barHeight) / 2;
-            g.FillRectangle(glyphBrush, startX, y, barWidth, barHeight);
-            g.FillRectangle(glyphBrush, startX + barWidth + gap, y, barWidth, barHeight);
+            // Stop-square glyph - this is the only playback control now (see
+            // class remarks); a real stop, not a pause, so the icon says so.
+            int side = Height / 3;
+            var stopRect = new Rectangle((Width - side) / 2, (Height - side) / 2, side, side);
+            using var path = new GraphicsPath();
+            path.AddRectangle(stopRect);
+            g.FillPath(glyphBrush, path);
         }
         else
         {
@@ -108,73 +105,6 @@ internal sealed class CirclePlayButton : Control
             };
             g.FillPolygon(glyphBrush, points);
         }
-    }
-}
-
-/// <summary>Small square Stop button (~50px) - always stops regardless of current state.</summary>
-internal sealed class SquareStopButton : Control
-{
-    private bool _hover;
-    private bool _pressed;
-
-    public event EventHandler? Clicked;
-
-    public SquareStopButton()
-    {
-        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.SupportsTransparentBackColor, true);
-        BackColor = Color.Transparent;
-        Cursor = Cursors.Hand;
-        Size = new Size(50, 50);
-    }
-
-    protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
-    protected override void OnMouseLeave(EventArgs e) { _hover = false; _pressed = false; Invalidate(); base.OnMouseLeave(e); }
-    protected override void OnMouseDown(MouseEventArgs e) { _pressed = true; Invalidate(); base.OnMouseDown(e); }
-    protected override void OnMouseUp(MouseEventArgs e)
-    {
-        bool wasPressed = _pressed;
-        _pressed = false;
-        Invalidate();
-        base.OnMouseUp(e);
-        if (wasPressed && ClientRectangle.Contains(e.Location))
-            Clicked?.Invoke(this, EventArgs.Empty);
-    }
-
-    protected override void OnPaint(PaintEventArgs e)
-    {
-        Graphics g = e.Graphics;
-        g.SmoothingMode = SmoothingMode.AntiAlias;
-
-        int inset = _pressed ? 2 : 0;
-        var rect = new Rectangle(inset, inset, Width - 1 - inset * 2, Height - 1 - inset * 2);
-
-        Color border = _pressed ? UiColors.AccentPressed : _hover ? UiColors.AccentHover : UiColors.Accent;
-        Color fill = _hover ? UiColors.ButtonFillHover : UiColors.ButtonFill;
-
-        using (var path = RoundedRect(rect, 6))
-        {
-            using (var fillBrush = new SolidBrush(fill))
-                g.FillPath(fillBrush, path);
-            using (var pen = new Pen(border, 1.5f))
-                g.DrawPath(pen, path);
-        }
-
-        int glyphSize = Height / 3;
-        var glyphRect = new Rectangle((Width - glyphSize) / 2, (Height - glyphSize) / 2, glyphSize, glyphSize);
-        using var glyphBrush = new SolidBrush(Color.White);
-        g.FillRectangle(glyphBrush, glyphRect);
-    }
-
-    private static GraphicsPath RoundedRect(Rectangle rect, int radius)
-    {
-        int d = radius * 2;
-        var path = new GraphicsPath();
-        path.AddArc(rect.X, rect.Y, d, d, 180, 90);
-        path.AddArc(rect.Right - d, rect.Y, d, d, 270, 90);
-        path.AddArc(rect.Right - d, rect.Bottom - d, d, d, 0, 90);
-        path.AddArc(rect.X, rect.Bottom - d, d, d, 90, 90);
-        path.CloseFigure();
-        return path;
     }
 }
 

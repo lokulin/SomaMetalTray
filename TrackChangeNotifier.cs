@@ -1,8 +1,5 @@
 using System;
-using System.IO;
-using System.Net.Http;
 using System.Security;
-using System.Threading.Tasks;
 using System.Windows.Forms;
 using Windows.Data.Xml.Dom;
 using Windows.UI.Notifications;
@@ -29,15 +26,6 @@ public sealed class TrackChangeNotifier
     // Start Menu shortcut, so nothing extra is needed beyond reusing it here).
     private const string AppUserModelId = "TerraEclectic.SomaMetalTray.v1";
 
-    // Windows' toast notification platform fetches a remote <image src>
-    // itself, but on a cold ShellExperienceHost network stack (e.g. the very
-    // first toast after launch) that fetch can be slow enough to miss
-    // whatever internal timeout it uses - the toast still shows, just with no
-    // art, and it never retries. Downloading it ourselves first and pointing
-    // the toast at a local file sidesteps that race entirely.
-    private static readonly HttpClient s_http = new();
-    private static readonly string ArtCachePath = Path.Combine(Path.GetTempPath(), "SomaMetalTray", "now-playing-art.jpg");
-
     private readonly AppSettings _settings;
     private bool _isPlaying;
 
@@ -51,14 +39,21 @@ public sealed class TrackChangeNotifier
         _isPlaying = state == PlaybackState.Playing;
     }
 
-    public void OnMetadataChanged(TrackMetadata metadata)
+    /// <summary>
+    /// <paramref name="localArtPath"/> should be a file ArtworkService has
+    /// already resolved/cached to disk (SomaFM's own feed never supplies
+    /// art - see TrackMetadata.ArtUrl) - passing it directly here avoids a
+    /// second network round-trip to whichever remote source it originally
+    /// came from.
+    /// </summary>
+    public void OnMetadataChanged(TrackMetadata metadata, string? localArtPath)
     {
         if (!_isPlaying || !_settings.ShowTrackChangeNotifications)
         {
             return;
         }
 
-        _ = ShowAsync(metadata, reportErrors: false);
+        ShowInternal(metadata, localArtPath, reportErrors: false);
     }
 
     /// <summary>
@@ -66,16 +61,15 @@ public sealed class TrackChangeNotifier
     /// enabled-setting gates - used to verify the setting without waiting
     /// for a real track change (or even needing to be playing at all).
     /// </summary>
-    public void ShowTest(TrackMetadata metadata)
+    public void ShowTest(TrackMetadata metadata, string? localArtPath = null)
     {
-        _ = ShowAsync(metadata, reportErrors: true);
+        ShowInternal(metadata, localArtPath, reportErrors: true);
     }
 
-    private static async Task ShowAsync(TrackMetadata metadata, bool reportErrors)
+    private static void ShowInternal(TrackMetadata metadata, string? localArtPath, bool reportErrors)
     {
         try
         {
-            string? localArtPath = await DownloadArtAsync(metadata.ArtUrl);
             Show(metadata, localArtPath);
         }
         catch (Exception ex)
@@ -92,35 +86,13 @@ public sealed class TrackChangeNotifier
         }
     }
 
-    // Best-effort: any failure here (bad URL, network hiccup, slow response)
-    // just means the toast goes out without art, same as ArtUrl being empty.
-    private static async Task<string?> DownloadArtAsync(string? artUrl)
-    {
-        if (string.IsNullOrEmpty(artUrl))
-        {
-            return null;
-        }
-
-        try
-        {
-            byte[] bytes = await s_http.GetByteArrayAsync(artUrl);
-            Directory.CreateDirectory(Path.GetDirectoryName(ArtCachePath)!);
-            await File.WriteAllBytesAsync(ArtCachePath, bytes);
-            return ArtCachePath;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
     private static void Show(TrackMetadata metadata, string? localArtPath)
     {
         // hint-crop="circle" + appLogoOverride matches how most media-player
-        // toasts present album art. localArtPath is a local file downloaded
-        // by DownloadArtAsync above - toast image sources need to be either a
-        // remote https URL or a local file URI, and a local one is both
-        // faster and more reliable to load than fetching in place.
+        // toasts present album art. localArtPath is ArtworkService's own
+        // disk-cache file for this track (or the station logo) - toast image
+        // sources need to be either a remote https URL or a local file URI,
+        // and reusing the file already on disk avoids a redundant download.
         string imageNode = localArtPath is null
             ? ""
             : $"<image placement=\"appLogoOverride\" hint-crop=\"circle\" src=\"{SecurityElement.Escape(new Uri(localArtPath).AbsoluteUri)}\"/>";

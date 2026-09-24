@@ -66,6 +66,9 @@ public sealed class ArtworkService : IDisposable
     private Image? _fallbackLogo;
     private string? _fallbackLogoUrl;
 
+    /// <summary>Local disk path of the cached station logo, once <see cref="GetFallbackLogoAsync"/> has fetched it - usable directly as a file:// art source for SMTC/toasts.</summary>
+    public string? FallbackLogoPath { get; private set; }
+
     private readonly record struct CacheEntry(Image? Image, DateTimeOffset CachedAt)
     {
         public bool IsExpiredNegative => Image is null && DateTimeOffset.UtcNow - CachedAt >= NegativeResultTtl;
@@ -168,12 +171,37 @@ public sealed class ArtworkService : IDisposable
             _fallbackLogo?.Dispose();
             _fallbackLogo = image;
             _fallbackLogoUrl = logoUrl;
+
+            try
+            {
+                Directory.CreateDirectory(_diskCacheDir);
+                string path = Path.Combine(_diskCacheDir, "_station_logo.jpg");
+                await File.WriteAllBytesAsync(path, bytes, ct);
+                FallbackLogoPath = path;
+            }
+            catch
+            {
+                // Best-effort - SMTC/toast art just falls back to having none for this track.
+                FallbackLogoPath = null;
+            }
+
             return _fallbackLogo;
         }
         catch
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// The local disk-cache file path for a track's art, if <see cref="GetArtworkAsync"/>
+    /// resolved one for this artist+title - usable directly as a file:// art source for
+    /// SMTC/toasts without a second network round-trip to whichever remote source it came from.
+    /// </summary>
+    public string? GetCachedArtPath(string artist, string title)
+    {
+        string path = DiskCachePath(BuildCacheKey(artist, title), positive: true);
+        return File.Exists(path) ? path : null;
     }
 
     // --- Source 1: fanart.tv (via a MusicBrainz recording -> release-group resolution) ---
