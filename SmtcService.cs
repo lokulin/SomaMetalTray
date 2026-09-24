@@ -1,7 +1,9 @@
 using System;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using Windows.Foundation;
 using Windows.Media;
+using Windows.Storage;
 using Windows.Storage.Streams;
 using WinRT;
 
@@ -63,17 +65,39 @@ public sealed class SmtcService : IDisposable
         _smtc.PlaybackStatus = status;
     }
 
-    public void UpdateMetadata(string title, string artist, string album, string? artUrl)
+    /// <param name="localArtPath">
+    /// A local file path (ArtworkService's own disk cache - see PlayerForm.UpdateArtworkAsync),
+    /// not a remote URL. RandomAccessStreamReference.CreateFromUri(file://...) is a known-flaky
+    /// path for local files from an unpackaged Win32 app (no package identity for WinRT's file
+    /// broker to resolve against) - StorageFile.GetFileFromPathAsync + CreateFromFile is the
+    /// documented-reliable way to hand SMTC a local file's thumbnail.
+    /// </param>
+    public async Task UpdateMetadataAsync(string title, string artist, string album, string? localArtPath)
     {
         _updater.MusicProperties.Title = title;
         _updater.MusicProperties.Artist = artist;
         _updater.MusicProperties.AlbumTitle = album;
 
-        _updater.Thumbnail = !string.IsNullOrEmpty(artUrl) && Uri.TryCreate(artUrl, UriKind.Absolute, out Uri? artUri)
-            ? RandomAccessStreamReference.CreateFromUri(artUri)
-            : null;
+        _updater.Thumbnail = await LoadThumbnailAsync(localArtPath);
 
         _updater.Update();
+    }
+
+    private static async Task<RandomAccessStreamReference?> LoadThumbnailAsync(string? localArtPath)
+    {
+        if (string.IsNullOrEmpty(localArtPath))
+            return null;
+
+        try
+        {
+            StorageFile file = await StorageFile.GetFileFromPathAsync(localArtPath);
+            return RandomAccessStreamReference.CreateFromFile(file);
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"SmtcService.LoadThumbnailAsync - failed to load '{localArtPath}': {ex.Message}");
+            return null;
+        }
     }
 
     public void Dispose()

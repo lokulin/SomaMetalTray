@@ -74,6 +74,7 @@ public sealed class TrackChangeNotifier
         }
         catch (Exception ex)
         {
+            Logger.Log($"TrackChangeNotifier.Show failed - localArtPath='{localArtPath ?? "(none)"}': {ex}");
             if (reportErrors)
             {
                 MessageBox.Show(
@@ -96,6 +97,8 @@ public sealed class TrackChangeNotifier
         string imageNode = localArtPath is null
             ? ""
             : $"<image placement=\"appLogoOverride\" hint-crop=\"circle\" src=\"{SecurityElement.Escape(new Uri(localArtPath).AbsoluteUri)}\"/>";
+
+        Logger.Log($"TrackChangeNotifier.Show - localArtPath='{localArtPath ?? "(none)"}', imageNode='{imageNode}'");
 
         string xml = $"""
             <toast>

@@ -31,7 +31,7 @@ public sealed class PlayerForm : Form
     private static readonly Color GlowCore = Color.FromArgb(0xb5, 0x1f, 0x1f);
     private static readonly Color AccentColor = Color.FromArgb(0xc0, 0x30, 0x30);
 
-    private const int WindowHeight = 440;
+    private const int WindowHeight = 380;
 
     private const int ArtSize = 300;
     private const int ArtCornerRadius = 5;
@@ -41,14 +41,14 @@ public sealed class PlayerForm : Form
     private const int ReflectionHeight = WindowHeight - ReflectionTop; // runs flush to the window's bottom edge
 
     private const int InfoLeft = ArtMarginLeft + ArtSize + 30; // 360
-    private const int TitleTop = ArtMarginTop + ArtSize / 3;     // ~1/3 down the album art, 126
-    private const int ArtistTop = TitleTop + 64;                // 190
-    private const int AlbumTop = ArtistTop + 30;                 // 220
-    private const int ProgressTop = AlbumTop + 32;               // 252
+    private const int TitleTop = ArtMarginTop + ArtSize / 10;    // ~10% down the album art, 56
+    private const int ArtistTop = TitleTop + 60;                 // 116
+    private const int AlbumTop = ArtistTop + 28;                 // 144
+    private const int ProgressTop = AlbumTop + 30;               // 174
     private const int ProgressHeight = 10;
-    private const int TimeLabelsTop = ProgressTop + ProgressHeight + 6; // 268
-    private const int StatusTop = TimeLabelsTop + 18 + 4;        // 290
-    private const int ControlsTop = StatusTop + 18 + 10;         // 318
+    private const int TimeLabelsTop = ProgressTop + ProgressHeight + 4; // 188
+    private const int StatusTop = TimeLabelsTop + 18;             // 206
+    private const int ControlsTop = StatusTop + 22;               // 228 - snug under the progress bar/status line
 
     private const int LivePillWidth = 100;
     private const int LivePillHeight = 34;
@@ -514,7 +514,10 @@ public sealed class PlayerForm : Form
 
         SetAlbumArt(art);
 
-        _smtc?.UpdateMetadata(metadata.Title, metadata.Artist, metadata.Album, artPath);
+        Logger.Log($"UpdateArtworkAsync - resolved artPath='{artPath ?? "(none)"}' for '{metadata.Artist} - {metadata.Title}'");
+
+        if (_smtc is not null)
+            await _smtc.UpdateMetadataAsync(metadata.Title, metadata.Artist, metadata.Album, artPath);
         _trackChangeNotifier.OnMetadataChanged(metadata, artPath);
     }
 
