@@ -31,13 +31,18 @@ public sealed class PlayerForm : Form
     private static readonly Color GlowCore = Color.FromArgb(0xb5, 0x1f, 0x1f);
     private static readonly Color AccentColor = Color.FromArgb(0xc0, 0x30, 0x30);
 
-    private const int WindowHeight = 380;
+    // Fully custom title bar (see DrawTitleBar/OnMouseDown) - FormBorderStyle
+    // is None, so unlike a native caption this height has to be reserved out
+    // of our own ClientSize/content layout ourselves.
+    private const int TitleBarHeight = 32;
+
+    private const int WindowHeight = 380 + TitleBarHeight;
 
     private const int ArtSize = 300;
     private const int ArtCornerRadius = 5;
     private const int ArtMarginLeft = 30;
-    private const int ArtMarginTop = 26;   // shifted up now that the top-left station heading is gone
-    private const int ReflectionTop = ArtMarginTop + ArtSize + 2;      // 328
+    private const int ArtMarginTop = TitleBarHeight + 26;
+    private const int ReflectionTop = ArtMarginTop + ArtSize + 2;
     private const int ReflectionHeight = WindowHeight - ReflectionTop; // runs flush to the window's bottom edge
 
     private const int InfoLeft = ArtMarginLeft + ArtSize + 30; // 360
@@ -76,6 +81,8 @@ public sealed class PlayerForm : Form
     private readonly Label _statusLabel = new();
     private readonly CirclePlayButton _playButton = new();
     private readonly VolumeSliderControl _volumeSlider = new();
+    private readonly TitleBarButton _minimizeButton = new(TitleBarGlyph.Minimize);
+    private readonly TitleBarButton _closeButton = new(TitleBarGlyph.Close);
 
     private readonly System.Windows.Forms.Timer _uiTimer = new() { Interval = 100 };
     private int _uiTimerTicks;
@@ -129,7 +136,13 @@ public sealed class PlayerForm : Form
         MinimumSize = size;
         MaximumSize = size;
         ClientSize = size;
-        FormBorderStyle = FormBorderStyle.FixedSingle;
+        // No native title bar at all - a standard FixedSingle caption always
+        // left a faint 1px seam where it met our own gradient (see
+        // WindowChromeHelper for the investigation); DrawTitleBar/OnMouseDown
+        // below hand-draw the title row and handle dragging/the system menu
+        // ourselves instead. Fixed-size (Minimum==Maximum), so no resize
+        // border/hit-testing is needed either.
+        FormBorderStyle = FormBorderStyle.None;
         MaximizeBox = false;
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.CenterScreen;
@@ -144,13 +157,7 @@ public sealed class PlayerForm : Form
 
         TrySetIcon();
 
-        // WindowChromeHelper's native dark title bar already colors the caption
-        // to match GradientTop, which is as close as the DWM caption-color API
-        // lets a standard (non-custom-drawn) titlebar blend into a gradient
-        // background - going further (fully custom-painted borderless chrome)
-        // would mean reimplementing drag/resize/system-menu hit-testing from
-        // scratch, which isn't worth the risk for this pass.
-        HandleCreated += (_, _) => WindowChromeHelper.ApplyDarkTitleBar(this, GradientTop, Color.White);
+        HandleCreated += (_, _) => WindowChromeHelper.ApplyDarkChrome(this);
         HandleCreated += (_, _) => BuildSystemMenu();
 
         BuildControls();
@@ -170,6 +177,14 @@ public sealed class PlayerForm : Form
 
     private void BuildControls()
     {
+        _closeButton.Size = new Size(46, TitleBarHeight);
+        _closeButton.Location = new Point(ClientSize.Width - _closeButton.Width, 0);
+        _closeButton.Activated += (_, _) => Close();
+
+        _minimizeButton.Size = new Size(46, TitleBarHeight);
+        _minimizeButton.Location = new Point(_closeButton.Left - _minimizeButton.Width, 0);
+        _minimizeButton.Activated += (_, _) => WindowState = FormWindowState.Minimized;
+
         int infoWidth = ClientSize.Width - InfoLeft - 30;
 
         _titleLabel.Text = "Loading...";
@@ -224,6 +239,8 @@ public sealed class PlayerForm : Form
         Controls.Add(_statusLabel);
         Controls.Add(_playButton);
         Controls.Add(_volumeSlider);
+        Controls.Add(_minimizeButton);
+        Controls.Add(_closeButton);
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -248,6 +265,26 @@ public sealed class PlayerForm : Form
         DrawLivePill(g);
         DrawProgressBar(g);
         DrawSpeakerIcon(g);
+        DrawTitleBar(g);
+    }
+
+    private void DrawTitleBar(Graphics g)
+    {
+        // Drawn last, directly on top of the same gradient DrawBackground
+        // already filled the whole window with - there's no separate
+        // panel/colour block here, which is what makes this seamless (see
+        // WindowChromeHelper for why a native caption never quite was).
+        if (_formIcon is not null)
+        {
+            var iconRect = new Rectangle(10, (TitleBarHeight - 18) / 2, 18, 18);
+            g.DrawIcon(_formIcon, iconRect);
+        }
+
+        using var font = new Font("Segoe UI", 9.5f);
+        using var textBrush = new SolidBrush(Color.Gainsboro);
+        using var format = new StringFormat { LineAlignment = StringAlignment.Center, Alignment = StringAlignment.Near };
+        var textRect = new Rectangle(36, 0, _minimizeButton.Left - 36, TitleBarHeight);
+        g.DrawString(Text, font, textBrush, textRect, format);
     }
 
     private void DrawBackground(Graphics g)
@@ -316,7 +353,7 @@ public sealed class PlayerForm : Form
         return path;
     }
 
-    private Rectangle LivePillRect => new(ClientSize.Width - 30 - LivePillWidth, 16, LivePillWidth, LivePillHeight);
+    private Rectangle LivePillRect => new(ClientSize.Width - 30 - LivePillWidth, TitleBarHeight + 16, LivePillWidth, LivePillHeight);
 
     private void DrawLivePill(Graphics g)
     {
@@ -395,6 +432,27 @@ public sealed class PlayerForm : Form
 
         using var pen = new Pen(Color.Gainsboro, 1.5f);
         g.DrawArc(pen, rect.X + 13, rect.Y + 5, 8, 14, -50, 100);
+    }
+
+    // Form-level mouse events only fire for pixels not already claimed by a
+    // child control, so this naturally only sees clicks on the "empty" part
+    // of the title bar strip - the minimize/close TitleBarButtons handle
+    // their own clicks independently via their Activated event.
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+
+        if (e.Y >= TitleBarHeight)
+            return;
+
+        if (e.Button == MouseButtons.Left)
+        {
+            WindowChromeHelper.BeginDrag(Handle);
+        }
+        else if (e.Button == MouseButtons.Right)
+        {
+            WindowChromeHelper.ShowSystemMenu(Handle, PointToScreen(e.Location));
+        }
     }
 
     private async void PlayerForm_Load(object? sender, EventArgs e)

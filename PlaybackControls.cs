@@ -211,3 +211,68 @@ internal sealed class VolumeSliderControl : Control
         return path;
     }
 }
+
+/// <summary>Which glyph a <see cref="TitleBarButton"/> draws.</summary>
+internal enum TitleBarGlyph
+{
+    Minimize,
+    Close,
+}
+
+/// <summary>
+/// A minimize/close button for the custom borderless title bar (see
+/// PlayerForm.DrawTitleBar/OnPaint) - plain flat glyph, Windows 11-style
+/// hover highlight (subtle grey for minimize, red for close).
+/// </summary>
+internal sealed class TitleBarButton : Control
+{
+    private readonly TitleBarGlyph _glyph;
+    private bool _hover;
+
+    public event EventHandler? Activated;
+
+    public TitleBarButton(TitleBarGlyph glyph)
+    {
+        _glyph = glyph;
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.SupportsTransparentBackColor, true);
+        BackColor = Color.Transparent;
+        Cursor = Cursors.Default;
+        Size = new Size(46, 32);
+    }
+
+    protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
+    protected override void OnMouseLeave(EventArgs e) { _hover = false; Invalidate(); base.OnMouseLeave(e); }
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        base.OnMouseUp(e);
+        if (e.Button == MouseButtons.Left && ClientRectangle.Contains(e.Location))
+            Activated?.Invoke(this, EventArgs.Empty);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        Graphics g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+
+        if (_hover)
+        {
+            Color hoverFill = _glyph == TitleBarGlyph.Close ? Color.FromArgb(0xc4, 0x2b, 0x1c) : Color.FromArgb(40, Color.White);
+            using var hoverBrush = new SolidBrush(hoverFill);
+            g.FillRectangle(hoverBrush, ClientRectangle);
+        }
+
+        using var pen = new Pen(Color.Gainsboro, 1f);
+        int cx = Width / 2;
+        int cy = Height / 2;
+
+        if (_glyph == TitleBarGlyph.Minimize)
+        {
+            g.DrawLine(pen, cx - 5, cy, cx + 5, cy);
+        }
+        else
+        {
+            g.DrawLine(pen, cx - 5, cy - 5, cx + 5, cy + 5);
+            g.DrawLine(pen, cx - 5, cy + 5, cx + 5, cy - 5);
+        }
+    }
+}
