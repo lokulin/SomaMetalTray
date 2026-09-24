@@ -17,10 +17,12 @@ namespace SomaMetalTray;
 /// Death.FM web player / DeathFmAndroid's portrait layout / DeathFmCastReceiver:
 /// album art with a reflection on the left, over a dark-to-red gradient
 /// background, track info on the right, custom Play/Stop + volume controls
-/// underneath, and a cosmetic ever-creeping progress bar (there's no real
-/// track-duration API - see ComputeFakeProgress). Closing the window hides it
-/// to the tray instead of exiting (configurable); the tray icon is what
-/// actually owns app lifetime.
+/// underneath, and a progress bar - real (from ArtworkService.GetCachedDuration,
+/// picked up from Deezer/iTunes/MusicBrainz alongside the art lookup) when a
+/// source had one, otherwise falling back to a cosmetic ever-creeping curve
+/// (see ComputeFakeProgress) since SomaFM itself never provides a duration.
+/// Closing the window hides it to the tray instead of exiting (configurable);
+/// the tray icon is what actually owns app lifetime.
 /// </summary>
 public sealed class PlayerForm : Form
 {
@@ -98,6 +100,11 @@ public sealed class PlayerForm : Form
     private DateTimeOffset? _trackStartTime;
     private double _progressFraction;
     private double _progressEffectiveTotalSeconds;
+    // Set once ArtworkService's lookup resolves for the current track, if any
+    // source had one (Deezer/iTunes/MusicBrainz all report it) - see
+    // UpdateProgress, which prefers this real value over ComputeFakeProgress
+    // whenever it's known. Null until then/if nothing has it.
+    private TimeSpan? _realDuration;
     private double _pulseAlpha = 255;
 
     private Image? _currentArt;       // owned by ArtworkService - never dispose this one
@@ -520,7 +527,12 @@ public sealed class PlayerForm : Form
             // MetadataChanged event here means a genuinely new track -
             // always reset the fake-progress elapsed-time basis, never
             // continue accumulating from the previous track's start time.
+            // The real duration (if any) isn't known yet either - it's set
+            // once artwork resolves, below/in UpdateArtworkAsync - so this
+            // starts on the fake curve and may snap to the real one shortly
+            // after if a source has a duration for this track.
             _trackStartTime = metadata.StartedAt ?? DateTimeOffset.UtcNow;
+            _realDuration = null;
             UpdateProgress();
 
             if (_isPlaying)
@@ -586,7 +598,15 @@ public sealed class PlayerForm : Form
 
         SetAlbumArt(art);
 
-        Logger.Log($"UpdateArtworkAsync - resolved artPath='{artPath ?? "(none)"}' for '{metadata.Artist} - {metadata.Title}'");
+        // Deezer/iTunes/MusicBrainz all report track duration in the same
+        // response already fetched for the art - free data. Prefer it over
+        // the fake progress curve once it's known (see UpdateProgress); a
+        // Bandcamp-only match or no match at all leaves this null, in which
+        // case the fake curve keeps running uninterrupted.
+        _realDuration = _artwork.GetCachedDuration(metadata.Artist, metadata.Title);
+        UpdateProgress();
+
+        Logger.Log($"UpdateArtworkAsync - resolved artPath='{artPath ?? "(none)"}', duration={_realDuration?.ToString() ?? "(unknown)"} for '{metadata.Artist} - {metadata.Title}'");
 
         if (_smtc is not null)
             await _smtc.UpdateMetadataAsync(metadata.Title, metadata.Artist, metadata.Album, artPath);
@@ -834,7 +854,16 @@ public sealed class PlayerForm : Form
         }
 
         double elapsedSeconds = Math.Max(0, (DateTimeOffset.UtcNow - _trackStartTime.Value).TotalSeconds);
-        (_progressFraction, _progressEffectiveTotalSeconds) = ComputeFakeProgress(elapsedSeconds);
+
+        if (_realDuration is TimeSpan real && real.TotalSeconds > 0)
+        {
+            _progressEffectiveTotalSeconds = real.TotalSeconds;
+            _progressFraction = Math.Clamp(elapsedSeconds / real.TotalSeconds, 0.0, 1.0);
+        }
+        else
+        {
+            (_progressFraction, _progressEffectiveTotalSeconds) = ComputeFakeProgress(elapsedSeconds);
+        }
 
         _elapsedLabel.Text = FormatTime(elapsedSeconds);
 

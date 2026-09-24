@@ -34,9 +34,13 @@ notifications on track change, start-at-startup, and minimize-to-tray.
   scrobbles to Last.fm, shows a Discord Rich Presence status with real
   per-track art, and pops a toast notification (with art) on track change -
   all optional/best-effort.
-- A purely cosmetic, ever-creeping progress bar, since there's no real
-  per-track duration available anywhere for a live radio stream (see
-  `PlayerForm.ComputeFakeProgress`).
+- A progress bar backed by a real track duration when one's available -
+  Deezer, iTunes, and MusicBrainz (via the fanart.tv lookup) all report it in
+  the very same response already being read for the cover art, so it's
+  essentially free once you're already making that call. Falls back to a
+  purely cosmetic, ever-creeping curve (see `PlayerForm.ComputeFakeProgress`)
+  for a Bandcamp-only match or no match at all, since SomaFM's own feed never
+  provides a duration for a live radio stream.
 - Click the title, artist, or album text to copy the current track info
   ("Title — Artist — Album") to the clipboard.
 - Clears this app's own stale entries from the Windows Notification Center
@@ -126,12 +130,14 @@ can otherwise return a same-titled track by a completely unrelated, more
 Results (including "no art anywhere" negative results, with a shorter TTL so
 they're eventually retried) are cached in memory and on disk under
 `%LOCALAPPDATA%\SomaMetalTray\ArtCache`, so a restart doesn't re-spend
-rate-limit budget re-fetching tracks already looked up before. The resolved
-image is cached alongside the *public URL* it came from (as a `.url` sidecar
-file next to the cached `.jpg`), separately from the local file path - SMTC
-and toast notifications need a local file, Discord Rich Presence needs a
-fetchable public URL, and both are served from this one cache without a
-second network round-trip.
+rate-limit budget re-fetching tracks already looked up before. Alongside the
+cached `.jpg` itself, two small sidecar files capture data that came along
+for free in the same lookup: a `.url` file with the *public URL* the art came
+from (SMTC/toast notifications need a local file, Discord Rich Presence needs
+a fetchable public URL, and both are served from this one cache without a
+second network round-trip), and a `.duration` file with the track's real
+length in seconds when Deezer, iTunes, or MusicBrainz reported one (see
+"What it does" above) - read back via `GetCachedDuration`.
 
 ## API keys / secrets
 

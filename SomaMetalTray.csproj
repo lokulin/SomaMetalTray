@@ -20,8 +20,8 @@
     <Product>Metal Detector</Product>
     <Description>A Windows tray player for SomaFM's Metal Detector internet radio channel</Description>
     <Company>Terra Eclectic</Company>
-    <Version>0.2.0</Version>
-    <FileVersion>0.2.0.0</FileVersion>
+    <Version>0.3.0</Version>
+    <FileVersion>0.3.0.0</FileVersion>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <Platforms>x64</Platforms>
     <StartupObject>SomaMetalTray.Program</StartupObject>

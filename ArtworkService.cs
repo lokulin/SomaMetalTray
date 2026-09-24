@@ -69,7 +69,7 @@ public sealed class ArtworkService : IDisposable
     /// <summary>Local disk path of the cached station logo, once <see cref="GetFallbackLogoAsync"/> has fetched it - usable directly as a file:// art source for SMTC/toasts.</summary>
     public string? FallbackLogoPath { get; private set; }
 
-    private readonly record struct CacheEntry(Image? Image, string? SourceUrl, DateTimeOffset CachedAt)
+    private readonly record struct CacheEntry(Image? Image, string? SourceUrl, TimeSpan? Duration, DateTimeOffset CachedAt)
     {
         public bool IsExpiredNegative => Image is null && DateTimeOffset.UtcNow - CachedAt >= NegativeResultTtl;
     }
@@ -126,27 +126,27 @@ public sealed class ArtworkService : IDisposable
             if (_memoryCache.TryGetValue(key, out CacheEntry cached) && !cached.IsExpiredNegative)
                 return cached.Image;
 
-            (Image? diskImage, string? diskSourceUrl, bool isNegative, bool isExpired) = TryLoadFromDisk(key);
+            (Image? diskImage, string? diskSourceUrl, TimeSpan? diskDuration, bool isNegative, bool isExpired) = TryLoadFromDisk(key);
             if (diskImage is not null)
             {
-                _memoryCache[key] = new CacheEntry(diskImage, diskSourceUrl, DateTimeOffset.UtcNow);
+                _memoryCache[key] = new CacheEntry(diskImage, diskSourceUrl, diskDuration, DateTimeOffset.UtcNow);
                 return diskImage;
             }
             if (isNegative && !isExpired)
             {
-                _memoryCache[key] = new CacheEntry(null, null, DateTimeOffset.UtcNow);
+                _memoryCache[key] = new CacheEntry(null, null, null, DateTimeOffset.UtcNow);
                 return null;
             }
 
-            (Image? Image, string? SourceUrl) fetched = await TryFetchFromFanArtTvAsync(artist, title, album, ct);
+            (Image? Image, string? SourceUrl, TimeSpan? Duration) fetched = await TryFetchFromFanArtTvAsync(artist, title, album, ct);
             if (fetched.Image is null) fetched = await TryFetchFromDeezerAsync(artist, title, ct);
             if (fetched.Image is null) fetched = await TryFetchFromBandcampAsync(artist, title, ct);
             if (fetched.Image is null) fetched = await TryFetchFromItunesAsync(artist, title, ct);
 
-            _memoryCache[key] = new CacheEntry(fetched.Image, fetched.SourceUrl, DateTimeOffset.UtcNow);
+            _memoryCache[key] = new CacheEntry(fetched.Image, fetched.SourceUrl, fetched.Duration, DateTimeOffset.UtcNow);
 
             if (fetched.Image is not null)
-                TrySaveToDisk(key, fetched.Image, fetched.SourceUrl);
+                TrySaveToDisk(key, fetched.Image, fetched.SourceUrl, fetched.Duration);
             else
                 TrySaveNegativeMarkerToDisk(key);
 
@@ -180,6 +180,32 @@ public sealed class ArtworkService : IDisposable
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// The track duration a previous <see cref="GetArtworkAsync"/> call
+    /// picked up alongside the art (Deezer/iTunes/MusicBrainz all report it
+    /// in the same response used for cover art - Bandcamp/fanart.tv don't),
+    /// if any. Null means no source had a duration for this track, not that
+    /// the lookup failed - callers should fall back to a cosmetic estimate.
+    /// </summary>
+    public TimeSpan? GetCachedDuration(string artist, string title)
+    {
+        string key = BuildCacheKey(artist, title);
+        if (_memoryCache.TryGetValue(key, out CacheEntry cached))
+            return cached.Duration;
+
+        string durationPath = DiskCachePath(key, positive: true) + ".duration";
+        try
+        {
+            if (File.Exists(durationPath) && double.TryParse(File.ReadAllText(durationPath).Trim(), out double seconds))
+                return TimeSpan.FromSeconds(seconds);
+        }
+        catch
+        {
+            // Fall through to null.
+        }
+        return null;
     }
 
     /// <summary>Fetches (once) and caches the station's own logo, for use when a track has no art anywhere.</summary>
@@ -232,26 +258,26 @@ public sealed class ArtworkService : IDisposable
 
     // --- Source 1: fanart.tv (via a MusicBrainz recording -> release-group resolution) ---
 
-    private async Task<(Image? Image, string? SourceUrl)> TryFetchFromFanArtTvAsync(string artist, string title, string album, CancellationToken ct)
+    private async Task<(Image? Image, string? SourceUrl, TimeSpan? Duration)> TryFetchFromFanArtTvAsync(string artist, string title, string album, CancellationToken ct)
     {
         string? apiKey = _settings.FanArtTvApiKey;
         if (string.IsNullOrWhiteSpace(apiKey))
-            return (null, null); // Not configured - skip straight to Deezer, no error.
+            return (null, null, null); // Not configured - skip straight to Deezer, no error.
 
         try
         {
-            string? releaseGroupId = await ResolveMusicBrainzReleaseGroupIdAsync(artist, title, ct);
+            (string? releaseGroupId, TimeSpan? duration) = await ResolveMusicBrainzReleaseGroupIdAsync(artist, title, ct);
             if (string.IsNullOrEmpty(releaseGroupId))
-                return (null, null);
+                return (null, null, null);
 
             string url = $"https://webservice.fanart.tv/v3/music/albums/{releaseGroupId}?api_key={Uri.EscapeDataString(apiKey)}";
             using HttpResponseMessage response = await _http.GetAsync(url, ct);
             if (!response.IsSuccessStatusCode)
-                return (null, null); // Includes 403 (bad/unauthorized key) - just fall through.
+                return (null, null, null); // Includes 403 (bad/unauthorized key) - just fall through.
 
             using JsonDocument doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
             if (!doc.RootElement.TryGetProperty("albums", out JsonElement albums) || albums.ValueKind != JsonValueKind.Object)
-                return (null, null);
+                return (null, null, null);
 
             foreach (JsonProperty albumEntry in albums.EnumerateObject())
             {
@@ -263,14 +289,14 @@ public sealed class ArtworkService : IDisposable
                     continue;
 
                 byte[] bytes = await _http.GetByteArrayAsync(coverUrl, ct);
-                return (LoadIndependentImage(bytes), coverUrl);
+                return (LoadIndependentImage(bytes), coverUrl, duration);
             }
 
-            return (null, null);
+            return (null, null, null);
         }
         catch
         {
-            return (null, null);
+            return (null, null, null);
         }
     }
 
@@ -279,8 +305,10 @@ public sealed class ArtworkService : IDisposable
     // releases/release-groups included (the search endpoint alone doesn't
     // embed release-group data). Free, unauthenticated - but MusicBrainz asks
     // for <=1 request/sec, enforced via _lastMusicBrainzRequestUtc across
-    // both requests this makes.
-    private async Task<string?> ResolveMusicBrainzReleaseGroupIdAsync(string artist, string title, CancellationToken ct)
+    // both requests this makes. Also returns the recording's own "length"
+    // (milliseconds) from the search response, alongside the release-group ID -
+    // free duration data from a call already being made for the art lookup.
+    private async Task<(string? ReleaseGroupId, TimeSpan? Duration)> ResolveMusicBrainzReleaseGroupIdAsync(string artist, string title, CancellationToken ct)
     {
         try
         {
@@ -292,7 +320,7 @@ public sealed class ArtworkService : IDisposable
             if (!searchDoc.RootElement.TryGetProperty("recordings", out JsonElement recordings) ||
                 recordings.ValueKind != JsonValueKind.Array || recordings.GetArrayLength() == 0)
             {
-                return null;
+                return (null, null);
             }
 
             JsonElement topRecording = recordings[0];
@@ -303,11 +331,15 @@ public sealed class ArtworkService : IDisposable
                 ? creditNameEl.GetString()
                 : null;
             if (!ArtistNamesLooselyMatch(artist, recordingArtist))
-                return null; // Free-text search matched an unrelated recording - don't hand back its art.
+                return (null, null); // Free-text search matched an unrelated recording - don't hand back its art.
+
+            TimeSpan? duration = topRecording.TryGetProperty("length", out JsonElement lengthEl) && lengthEl.TryGetInt64(out long lengthMs) && lengthMs > 0
+                ? TimeSpan.FromMilliseconds(lengthMs)
+                : null;
 
             string? recordingId = topRecording.TryGetProperty("id", out JsonElement idEl) ? idEl.GetString() : null;
             if (string.IsNullOrEmpty(recordingId))
-                return null;
+                return (null, duration);
 
             await ThrottleMusicBrainzAsync(ct);
             string lookupUrl = $"https://musicbrainz.org/ws/2/recording/{recordingId}?inc=releases+release-groups&fmt=json";
@@ -316,7 +348,7 @@ public sealed class ArtworkService : IDisposable
             if (!lookupDoc.RootElement.TryGetProperty("releases", out JsonElement releases) ||
                 releases.ValueKind != JsonValueKind.Array || releases.GetArrayLength() == 0)
             {
-                return null;
+                return (null, duration);
             }
 
             foreach (JsonElement release in releases.EnumerateArray())
@@ -324,15 +356,15 @@ public sealed class ArtworkService : IDisposable
                 if (release.TryGetProperty("release-group", out JsonElement rg) &&
                     rg.TryGetProperty("id", out JsonElement rgIdEl))
                 {
-                    return rgIdEl.GetString();
+                    return (rgIdEl.GetString(), duration);
                 }
             }
 
-            return null;
+            return (null, duration);
         }
         catch
         {
-            return null;
+            return (null, null);
         }
     }
 
@@ -346,7 +378,7 @@ public sealed class ArtworkService : IDisposable
 
     // --- Source 2: Deezer (no auth, free-text search) ---
 
-    private async Task<(Image? Image, string? SourceUrl)> TryFetchFromDeezerAsync(string artist, string title, CancellationToken ct)
+    private async Task<(Image? Image, string? SourceUrl, TimeSpan? Duration)> TryFetchFromDeezerAsync(string artist, string title, CancellationToken ct)
     {
         try
         {
@@ -362,7 +394,7 @@ public sealed class ArtworkService : IDisposable
             if (!doc.RootElement.TryGetProperty("data", out JsonElement data) ||
                 data.ValueKind != JsonValueKind.Array || data.GetArrayLength() == 0)
             {
-                return (null, null);
+                return (null, null, null);
             }
 
             foreach (JsonElement candidate in data.EnumerateArray())
@@ -384,15 +416,23 @@ public sealed class ArtworkService : IDisposable
                 if (string.IsNullOrEmpty(coverUrl))
                     continue;
 
+                // "duration" sits right alongside the fields already read
+                // above, in seconds - free track-length data from a search
+                // we're already making for the cover art.
+                TimeSpan? duration = candidate.TryGetProperty("duration", out JsonElement durationEl) &&
+                    durationEl.TryGetInt64(out long durationSeconds) && durationSeconds > 0
+                    ? TimeSpan.FromSeconds(durationSeconds)
+                    : null;
+
                 byte[] bytes = await _http.GetByteArrayAsync(coverUrl, ct);
-                return (LoadIndependentImage(bytes), coverUrl);
+                return (LoadIndependentImage(bytes), coverUrl, duration);
             }
 
-            return (null, null);
+            return (null, null, null);
         }
         catch
         {
-            return (null, null);
+            return (null, null, null);
         }
     }
 
@@ -408,7 +448,7 @@ public sealed class ArtworkService : IDisposable
     // guessed at below (art_id / cover image URL construction) actually match
     // - until then this should safely no-op (fall through to iTunes) rather
     // than throw if any of those guesses are wrong.
-    private async Task<(Image? Image, string? SourceUrl)> TryFetchFromBandcampAsync(string artist, string title, CancellationToken ct)
+    private async Task<(Image? Image, string? SourceUrl, TimeSpan? Duration)> TryFetchFromBandcampAsync(string artist, string title, CancellationToken ct)
     {
         try
         {
@@ -435,14 +475,14 @@ public sealed class ArtworkService : IDisposable
 
             using HttpResponseMessage response = await _http.SendAsync(request, ct);
             if (!response.IsSuccessStatusCode)
-                return (null, null); // Includes a bot-block 403 - just fall through to iTunes.
+                return (null, null, null); // Includes a bot-block 403 - just fall through to iTunes.
 
             using JsonDocument doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
             if (!doc.RootElement.TryGetProperty("auto", out JsonElement auto) ||
                 !auto.TryGetProperty("results", out JsonElement results) ||
                 results.ValueKind != JsonValueKind.Array || results.GetArrayLength() == 0)
             {
-                return (null, null);
+                return (null, null, null);
             }
 
             foreach (JsonElement result in results.EnumerateArray())
@@ -456,15 +496,16 @@ public sealed class ArtworkService : IDisposable
                 if (string.IsNullOrEmpty(coverUrl))
                     continue;
 
+                // No duration field in this endpoint's response shape.
                 byte[] bytes = await _http.GetByteArrayAsync(coverUrl, ct);
-                return (LoadIndependentImage(bytes), coverUrl);
+                return (LoadIndependentImage(bytes), coverUrl, null);
             }
 
-            return (null, null);
+            return (null, null, null);
         }
         catch
         {
-            return (null, null);
+            return (null, null, null);
         }
     }
 
@@ -502,7 +543,7 @@ public sealed class ArtworkService : IDisposable
 
     // --- Source 4: iTunes (last resort - lower res, weakest underground-metal coverage of the four) ---
 
-    private async Task<(Image? Image, string? SourceUrl)> TryFetchFromItunesAsync(string artist, string title, CancellationToken ct)
+    private async Task<(Image? Image, string? SourceUrl, TimeSpan? Duration)> TryFetchFromItunesAsync(string artist, string title, CancellationToken ct)
     {
         try
         {
@@ -515,7 +556,7 @@ public sealed class ArtworkService : IDisposable
             if (!doc.RootElement.TryGetProperty("results", out JsonElement results) ||
                 results.ValueKind != JsonValueKind.Array || results.GetArrayLength() == 0)
             {
-                return (null, null);
+                return (null, null, null);
             }
 
             foreach (JsonElement candidate in results.EnumerateArray())
@@ -539,15 +580,22 @@ public sealed class ArtworkService : IDisposable
                 // larger) originals endpoint.
                 string hiResUrl = artworkUrl100.Replace("100x100bb", "600x600bb");
 
+                // "trackTimeMillis" sits right alongside the artwork field -
+                // free track-length data from a search already being made.
+                TimeSpan? duration = candidate.TryGetProperty("trackTimeMillis", out JsonElement timeEl) &&
+                    timeEl.TryGetInt64(out long trackTimeMillis) && trackTimeMillis > 0
+                    ? TimeSpan.FromMilliseconds(trackTimeMillis)
+                    : null;
+
                 byte[] bytes = await _http.GetByteArrayAsync(hiResUrl, ct);
-                return (LoadIndependentImage(bytes), hiResUrl);
+                return (LoadIndependentImage(bytes), hiResUrl, duration);
             }
 
-            return (null, null);
+            return (null, null, null);
         }
         catch
         {
-            return (null, null);
+            return (null, null, null);
         }
     }
 
@@ -558,7 +606,7 @@ public sealed class ArtworkService : IDisposable
     // of when the miss was recorded, so it can expire after NegativeResultTtl
     // instead of caching "no art" forever for a track that just isn't out yet.
 
-    private (Image? Image, string? SourceUrl, bool IsNegative, bool IsExpired) TryLoadFromDisk(string key)
+    private (Image? Image, string? SourceUrl, TimeSpan? Duration, bool IsNegative, bool IsExpired) TryLoadFromDisk(string key)
     {
         try
         {
@@ -573,12 +621,13 @@ public sealed class ArtworkService : IDisposable
                     // - self-heal by deleting it and falling through to a normal
                     // re-fetch rather than treating it as a valid cache hit.
                     File.Delete(imagePath);
-                    return (null, null, false, false);
+                    return (null, null, null, false, false);
                 }
 
                 byte[] bytes = File.ReadAllBytes(imagePath);
                 string? sourceUrl = TryReadSourceUrlSidecar(imagePath);
-                return (LoadIndependentImage(bytes), sourceUrl, false, false);
+                TimeSpan? duration = TryReadDurationSidecar(imagePath);
+                return (LoadIndependentImage(bytes), sourceUrl, duration, false, false);
             }
 
             string missPath = DiskCachePath(key, positive: false);
@@ -589,15 +638,15 @@ public sealed class ArtworkService : IDisposable
                 {
                     var cachedAt = new DateTimeOffset(ticks, TimeSpan.Zero);
                     bool expired = DateTimeOffset.UtcNow - cachedAt >= NegativeResultTtl;
-                    return (null, null, true, expired);
+                    return (null, null, null, true, expired);
                 }
             }
 
-            return (null, null, false, false);
+            return (null, null, null, false, false);
         }
         catch
         {
-            return (null, null, false, false);
+            return (null, null, null, false, false);
         }
     }
 
@@ -614,7 +663,22 @@ public sealed class ArtworkService : IDisposable
         }
     }
 
-    private void TrySaveToDisk(string key, Image image, string? sourceUrl)
+    private static TimeSpan? TryReadDurationSidecar(string imagePath)
+    {
+        try
+        {
+            string durationPath = imagePath + ".duration";
+            if (File.Exists(durationPath) && double.TryParse(File.ReadAllText(durationPath).Trim(), out double seconds))
+                return TimeSpan.FromSeconds(seconds);
+        }
+        catch
+        {
+            // Fall through to null.
+        }
+        return null;
+    }
+
+    private void TrySaveToDisk(string key, Image image, string? sourceUrl, TimeSpan? duration)
     {
         try
         {
@@ -622,12 +686,16 @@ public sealed class ArtworkService : IDisposable
             string imagePath = DiskCachePath(key, positive: true);
             image.Save(imagePath, System.Drawing.Imaging.ImageFormat.Jpeg);
 
-            // Sidecar file so the resolved remote URL survives a restart too
-            // (the in-memory cache alone wouldn't) - consumers that need a
-            // fetchable public URL rather than this local file (Discord Rich
-            // Presence) read it back via GetCachedArtSourceUrl.
+            // Sidecar files so the resolved remote URL/duration survive a
+            // restart too (the in-memory cache alone wouldn't) - consumers
+            // that need a fetchable public URL rather than this local file
+            // (Discord Rich Presence) read it back via GetCachedArtSourceUrl,
+            // and the real track length (when a source had one) via
+            // GetCachedDuration.
             if (!string.IsNullOrEmpty(sourceUrl))
                 File.WriteAllText(imagePath + ".url", sourceUrl);
+            if (duration is TimeSpan d)
+                File.WriteAllText(imagePath + ".duration", d.TotalSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture));
 
             // Clear any stale negative marker now that we have a real result.
             string missPath = DiskCachePath(key, positive: false);
