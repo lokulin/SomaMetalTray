@@ -31,6 +31,14 @@ public enum PlaybackState
 /// Also owns fetching/parsing the channel's .pls playlist to find a live ice*.somafm.com
 /// stream URL, and rotates to the next listed URL (or re-fetches the .pls) on playback
 /// failure - SomaFM's ice servers rotate and occasionally go down individually.
+///
+/// IMPORTANT: this constructs a *fresh* MediaPlayer instance on every Play() rather than
+/// reusing one long-lived instance across stop/start cycles. Reusing a single instance
+/// across a Source = null -> new Source cycle for a live network stream was found to
+/// sometimes leave the MediaPlayer in a state where Play() silently no-ops (no exception,
+/// no further PlaybackStateChanged/MediaFailed events) after a Stop() - reported
+/// symptom: pausing playback via the Windows SMTC flyout, then being unable to resume.
+/// See Logger/debug.log for the diagnostics added alongside this fix.
 /// </summary>
 public sealed class AudioPlayerService : IDisposable
 {
@@ -53,7 +61,12 @@ public sealed class AudioPlayerService : IDisposable
 
     private readonly HttpClient _http;
     private readonly AppSettings _settings;
-    private readonly MediaPlayer _player = new();
+
+    // The live MediaPlayer for the current play session - null whenever
+    // nothing is playing/starting. Recreated from scratch on every Play(),
+    // never reused across a Stop() -> Play() cycle (see class remarks above).
+    private MediaPlayer? _player;
+    private double _volume;
 
     private List<string> _streamUrls = new();
     private int _streamUrlIndex;
@@ -70,24 +83,22 @@ public sealed class AudioPlayerService : IDisposable
     public AudioPlayerService(AppSettings settings)
     {
         _settings = settings;
+        _volume = Math.Clamp(_settings.Volume ?? 0.8, 0.0, 1.0);
 
         _http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
         _http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("SomaMetalTray", "0.1"));
-
-        _player.AutoPlay = false;
-        _player.Volume = Math.Clamp(_settings.Volume ?? 0.8, 0.0, 1.0);
-        _player.MediaFailed += OnMediaFailed;
-        _player.PlaybackSession.PlaybackStateChanged += OnPlaybackSessionStateChanged;
     }
 
-    /// <summary>Volume as 0.0-1.0. Setting it both applies it live and persists it (this is the one place that owns volume persistence).</summary>
+    /// <summary>Volume as 0.0-1.0. Setting it both applies it live (if a MediaPlayer is currently live) and persists it (this is the one place that owns volume persistence).</summary>
     public double Volume
     {
-        get => _player.Volume;
+        get => _volume;
         set
         {
             double clamped = Math.Clamp(value, 0.0, 1.0);
-            _player.Volume = clamped;
+            _volume = clamped;
+            if (_player is not null)
+                _player.Volume = clamped;
             _settings.Volume = clamped;
             SettingsStore.Save(_settings);
         }
@@ -114,38 +125,75 @@ public sealed class AudioPlayerService : IDisposable
             _streamUrls = new List<string>(FallbackStreamUrls);
         }
 
+        string url = _streamUrls[_streamUrlIndex];
+        Logger.Log($"AudioPlayerService.Play() - streamUrl={url}, userWantsPlaying={_userWantsPlaying}");
+
+        // Tear down whatever the previous session's MediaPlayer was (if any)
+        // before building a fresh one - a call to Play() while already
+        // playing (or mid-retry) should always start clean rather than layer
+        // a second MediaPlayer on top of the old one.
+        DisposeCurrentPlayer();
+
         try
         {
-            var uri = new Uri(_streamUrls[_streamUrlIndex]);
-            _player.Source = MediaSource.CreateFromUri(uri);
-            _player.Play();
+            var player = new MediaPlayer
+            {
+                AutoPlay = false,
+                Volume = _volume,
+            };
+            player.MediaFailed += OnMediaFailed;
+            player.PlaybackSession.PlaybackStateChanged += OnPlaybackSessionStateChanged;
+            _player = player;
+
+            var uri = new Uri(url);
+            player.Source = MediaSource.CreateFromUri(uri);
+            player.Play();
         }
-        catch
+        catch (Exception ex)
         {
             // Bad URL or MediaSource creation failure - treat like a playback
             // failure and roll to the next candidate stream URL.
+            Logger.Log($"AudioPlayerService.Play() - failed to start ({ex.Message}), advancing to next stream URL");
             _ = AdvanceAndRetryAsync();
         }
     }
 
     public void Stop()
     {
+        Logger.Log($"AudioPlayerService.Stop() - userWantsPlaying was {_userWantsPlaying}");
         _userWantsPlaying = false;
+        DisposeCurrentPlayer();
+        PlaybackStateChanged?.Invoke(PlaybackState.Stopped);
+    }
+
+    // Unsubscribes event handlers before disposing, so a straggling event from
+    // an already-torn-down MediaPlayer can never fire into this service after
+    // it's no longer the "current" one.
+    private void DisposeCurrentPlayer()
+    {
+        MediaPlayer? old = _player;
+        _player = null;
+        if (old is null)
+            return;
+
         try
         {
-            _player.Pause();
-            _player.Source = null; // releases the live connection instead of leaving it buffering in the background
+            old.MediaFailed -= OnMediaFailed;
+            old.PlaybackSession.PlaybackStateChanged -= OnPlaybackSessionStateChanged;
+            old.Pause();
+            old.Source = null; // releases the live connection instead of leaving it buffering in the background
+            old.Dispose();
         }
         catch
         {
-            // Best-effort - Stop should never throw into a UI event handler.
+            // Best-effort - tearing down the old player should never throw into a UI event handler.
         }
-        PlaybackStateChanged?.Invoke(PlaybackState.Stopped);
     }
 
     private void OnPlaybackSessionStateChanged(MediaPlaybackSession sender, object args)
     {
-        PlaybackState state = sender.PlaybackState switch
+        MediaPlaybackState nativeState = sender.PlaybackState;
+        PlaybackState mapped = nativeState switch
         {
             MediaPlaybackState.Playing => PlaybackState.Playing,
             MediaPlaybackState.Paused => _userWantsPlaying ? PlaybackState.Buffering : PlaybackState.Stopped,
@@ -154,7 +202,9 @@ public sealed class AudioPlayerService : IDisposable
             _ => PlaybackState.Stopped,
         };
 
-        PlaybackStateChanged?.Invoke(state);
+        Logger.Log($"MediaPlayer.PlaybackStateChanged - native={nativeState}, mapped={mapped}, userWantsPlaying={_userWantsPlaying}");
+
+        PlaybackStateChanged?.Invoke(mapped);
     }
 
     // Ice servers rotate/occasionally go down - on a failure, try the next
@@ -164,6 +214,8 @@ public sealed class AudioPlayerService : IDisposable
     // a failure after a deliberate Stop() shouldn't restart playback.
     private void OnMediaFailed(MediaPlayer sender, MediaPlayerFailedEventArgs args)
     {
+        Logger.Log($"MediaPlayer.MediaFailed - error={args.Error}, message={args.ErrorMessage}, userWantsPlaying={_userWantsPlaying}");
+
         if (!_userWantsPlaying)
             return;
 
@@ -233,9 +285,7 @@ public sealed class AudioPlayerService : IDisposable
     public void Dispose()
     {
         _disposed = true;
-        _player.MediaFailed -= OnMediaFailed;
-        _player.PlaybackSession.PlaybackStateChanged -= OnPlaybackSessionStateChanged;
-        _player.Dispose();
+        DisposeCurrentPlayer();
         _http.Dispose();
     }
 }

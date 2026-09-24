@@ -37,11 +37,21 @@ public sealed class SmtcService : IDisposable
     {
         _smtc = GetForWindow(windowHandle);
         _smtc.IsPlayEnabled = true;
-        _smtc.IsPauseEnabled = true;
+        // A live radio stream has no real "paused" state to return to, so
+        // don't advertise a Pause affordance in the SMTC flyout - only
+        // Play/Stop are real capabilities here. Some Windows versions can
+        // still occasionally send a Pause button-press despite this being
+        // false (observed behavior, not documented) - PlayerForm handles that
+        // defensively by treating Pause the same as Stop either way.
+        _smtc.IsPauseEnabled = false;
         _smtc.IsStopEnabled = true;
         _smtc.PlaybackStatus = MediaPlaybackStatus.Closed;
 
-        _buttonPressedHandler = (_, e) => ButtonPressed?.Invoke(e.Button);
+        _buttonPressedHandler = (_, e) =>
+        {
+            Logger.Log($"SMTC ButtonPressed - button={e.Button}");
+            ButtonPressed?.Invoke(e.Button);
+        };
         _smtc.ButtonPressed += _buttonPressedHandler;
 
         _updater = _smtc.DisplayUpdater;
