@@ -1,0 +1,41 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+out/
+
+# VS Code
+.vs/
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# Rider / ReSharper
+.idea/
+*.sln.iml
+
+# User-specific files
+*.user
+*.userosscache
+*.suo
+
+# NuGet
+*.nupkg
+**/packages/*
+!**/packages/build/
+
+# Publish output
+publish/
+*.publish.xml
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Local app settings dropped by SettingsStore during dev/testing - this is
+# also where any local API keys (Last.fm, Discord, fanart.tv) end up if you
+# copy the real runtime settings file into the repo directory for some
+# reason; never commit it. The real runtime copy lives outside the repo
+# entirely, under %AppData%\SomaMetalTray\settings.json.
+settings.json

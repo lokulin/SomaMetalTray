@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- The 10.0.19041.0 TFM gives us the WinRT projections (Windows.Media.*)
+         needed for System Media Transport Controls and Windows.Media.Playback.MediaPlayer,
+         without any extra package refs. -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>SomaMetalTray</AssemblyName>
+    <RootNamespace>SomaMetalTray</RootNamespace>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <!-- These flow into the exe's version resource (FileDescription/Product) -
+         Windows falls back to reading this for the volume mixer / media flyout
+         app name when it can't otherwise resolve a friendly name. -->
+    <AssemblyTitle>SomaFM Metal Detector Player</AssemblyTitle>
+    <Product>SomaFM Metal Detector Player</Product>
+    <Description>A Windows tray player for SomaFM's Metal Detector internet radio channel</Description>
+    <Company>Terra Eclectic</Company>
+    <Version>0.1.0</Version>
+    <FileVersion>0.1.0.0</FileVersion>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <Platforms>x64</Platforms>
+    <StartupObject>SomaMetalTray.Program</StartupObject>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DiscordRichPresence" Version="1.6.1.70" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Embed icons in the assembly so single-file publish doesn't need loose Assets\ files. -->
+    <EmbeddedResource Include="Assets\app.ico">
+      <LogicalName>app.ico</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\tray.ico">
+      <LogicalName>tray.ico</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+</Project>
