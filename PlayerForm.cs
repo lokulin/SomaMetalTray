@@ -460,6 +460,12 @@ public sealed class PlayerForm : Form
         _smtc = new SmtcService(Handle);
         _smtc.ButtonPressed += OnSmtcButtonPressed;
 
+        // Track-change toasts are ephemeral - sweep out this app's own
+        // Notification Center history on every launch (including anything
+        // left over from before notifications were turned off) rather than
+        // letting old entries pile up indefinitely.
+        TrackChangeNotifier.ClearHistory();
+
         // Show the station's own logo as a placeholder immediately, rather
         // than leaving the art panel blank until the first track's own
         // artwork resolves (which can take a few seconds through the

@@ -40,6 +40,26 @@ public sealed class TrackChangeNotifier
     }
 
     /// <summary>
+    /// Clears this app's own entries from the Windows Notification Center
+    /// (Action Center) history. Track-change toasts are purely ephemeral -
+    /// there's no reason for old ones to keep piling up across every
+    /// launch, so this is called once on startup (see PlayerForm_Load)
+    /// regardless of whether notifications are currently enabled, to also
+    /// sweep out anything left over from before they were turned off.
+    /// </summary>
+    public static void ClearHistory()
+    {
+        try
+        {
+            ToastNotificationManager.History.Clear(AppUserModelId);
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"TrackChangeNotifier.ClearHistory failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
     /// <paramref name="localArtPath"/> should be a file ArtworkService has
     /// already resolved/cached to disk (SomaFM's own feed never supplies
     /// art - see TrackMetadata.ArtUrl) - passing it directly here avoids a
