@@ -269,7 +269,17 @@ public sealed class ArtworkService : IDisposable
                 return null;
             }
 
-            string? recordingId = recordings[0].TryGetProperty("id", out JsonElement idEl) ? idEl.GetString() : null;
+            JsonElement topRecording = recordings[0];
+
+            string? recordingArtist = topRecording.TryGetProperty("artist-credit", out JsonElement credits) &&
+                credits.ValueKind == JsonValueKind.Array && credits.GetArrayLength() > 0 &&
+                credits[0].TryGetProperty("name", out JsonElement creditNameEl)
+                ? creditNameEl.GetString()
+                : null;
+            if (!ArtistNamesLooselyMatch(artist, recordingArtist))
+                return null; // Free-text search matched an unrelated recording - don't hand back its art.
+
+            string? recordingId = topRecording.TryGetProperty("id", out JsonElement idEl) ? idEl.GetString() : null;
             if (string.IsNullOrEmpty(recordingId))
                 return null;
 
@@ -315,7 +325,12 @@ public sealed class ArtworkService : IDisposable
         try
         {
             string term = Uri.EscapeDataString($"{artist} {title}");
-            string url = $"https://api.deezer.com/search?q={term}&limit=1";
+            // A handful of candidates, not just the top one - Deezer's free-text
+            // relevance ranking can put an unrelated result first (e.g. a more
+            // "popular" completely different artist with a similarly-worded
+            // track title), so check a few for one whose artist actually matches
+            // before giving up on this source.
+            string url = $"https://api.deezer.com/search?q={term}&limit=5";
 
             using JsonDocument doc = JsonDocument.Parse(await _http.GetStringAsync(url, ct));
             if (!doc.RootElement.TryGetProperty("data", out JsonElement data) ||
@@ -324,19 +339,30 @@ public sealed class ArtworkService : IDisposable
                 return null;
             }
 
-            JsonElement first = data[0];
-            if (!first.TryGetProperty("album", out JsonElement albumEl) ||
-                !albumEl.TryGetProperty("cover_xl", out JsonElement coverEl))
+            foreach (JsonElement candidate in data.EnumerateArray())
             {
-                return null;
+                string? candidateArtist = candidate.TryGetProperty("artist", out JsonElement artistEl) &&
+                    artistEl.TryGetProperty("name", out JsonElement nameEl)
+                    ? nameEl.GetString()
+                    : null;
+                if (!ArtistNamesLooselyMatch(artist, candidateArtist))
+                    continue;
+
+                if (!candidate.TryGetProperty("album", out JsonElement albumEl) ||
+                    !albumEl.TryGetProperty("cover_xl", out JsonElement coverEl))
+                {
+                    continue;
+                }
+
+                string? coverUrl = coverEl.GetString();
+                if (string.IsNullOrEmpty(coverUrl))
+                    continue;
+
+                byte[] bytes = await _http.GetByteArrayAsync(coverUrl, ct);
+                return LoadIndependentImage(bytes);
             }
 
-            string? coverUrl = coverEl.GetString();
-            if (string.IsNullOrEmpty(coverUrl))
-                return null;
-
-            byte[] bytes = await _http.GetByteArrayAsync(coverUrl, ct);
-            return LoadIndependentImage(bytes);
+            return null;
         }
         catch
         {
@@ -455,7 +481,9 @@ public sealed class ArtworkService : IDisposable
         try
         {
             string term = Uri.EscapeDataString($"{artist} {title}");
-            string url = $"https://itunes.apple.com/search?term={term}&entity=song&limit=1";
+            // A few candidates, not just the top one - same reasoning as Deezer,
+            // check each for a genuinely matching artist before giving up.
+            string url = $"https://itunes.apple.com/search?term={term}&entity=song&limit=5";
 
             using JsonDocument doc = JsonDocument.Parse(await _http.GetStringAsync(url, ct));
             if (!doc.RootElement.TryGetProperty("results", out JsonElement results) ||
@@ -464,22 +492,32 @@ public sealed class ArtworkService : IDisposable
                 return null;
             }
 
-            JsonElement first = results[0];
-            if (!first.TryGetProperty("artworkUrl100", out JsonElement artworkEl))
-                return null;
+            foreach (JsonElement candidate in results.EnumerateArray())
+            {
+                string? candidateArtist = candidate.TryGetProperty("artistName", out JsonElement artistNameEl)
+                    ? artistNameEl.GetString()
+                    : null;
+                if (!ArtistNamesLooselyMatch(artist, candidateArtist))
+                    continue;
 
-            string? artworkUrl100 = artworkEl.GetString();
-            if (string.IsNullOrEmpty(artworkUrl100))
-                return null;
+                if (!candidate.TryGetProperty("artworkUrl100", out JsonElement artworkEl))
+                    continue;
 
-            // iTunes serves the same artwork at other sizes by swapping the
-            // "100x100bb" segment of the URL - 600x600 is the largest size
-            // reliably available without hitting their (undocumented, much
-            // larger) originals endpoint.
-            string hiResUrl = artworkUrl100.Replace("100x100bb", "600x600bb");
+                string? artworkUrl100 = artworkEl.GetString();
+                if (string.IsNullOrEmpty(artworkUrl100))
+                    continue;
 
-            byte[] bytes = await _http.GetByteArrayAsync(hiResUrl, ct);
-            return LoadIndependentImage(bytes);
+                // iTunes serves the same artwork at other sizes by swapping the
+                // "100x100bb" segment of the URL - 600x600 is the largest size
+                // reliably available without hitting their (undocumented, much
+                // larger) originals endpoint.
+                string hiResUrl = artworkUrl100.Replace("100x100bb", "600x600bb");
+
+                byte[] bytes = await _http.GetByteArrayAsync(hiResUrl, ct);
+                return LoadIndependentImage(bytes);
+            }
+
+            return null;
         }
         catch
         {
@@ -565,6 +603,40 @@ public sealed class ArtworkService : IDisposable
         {
             // Best-effort.
         }
+    }
+
+    // Free-text search sources (Deezer, iTunes, MusicBrainz) can rank an
+    // unrelated result first when there's no exact match in their catalog -
+    // e.g. this station's "137 - Lie For A Lie" matching a popular classical
+    // piano album because the search terms happened to overlap. Reject a
+    // candidate whose own reported artist name doesn't actually resemble the
+    // one we searched for, rather than trusting relevance ranking alone.
+    // Deliberately loose (case/punctuation-insensitive substring check, not
+    // an exact match) since real-world naming varies ("The Beatles" vs
+    // "Beatles", "AC/DC" vs "ACDC") - it only needs to catch results that are
+    // genuinely a different artist, not penalize minor formatting differences.
+    private static bool ArtistNamesLooselyMatch(string searched, string? candidate)
+    {
+        string a = NormalizeForComparison(searched);
+        string b = NormalizeForComparison(candidate);
+        if (a.Length == 0 || b.Length == 0)
+            return false;
+
+        return b.Contains(a, StringComparison.Ordinal) || a.Contains(b, StringComparison.Ordinal);
+    }
+
+    private static string NormalizeForComparison(string? s)
+    {
+        if (string.IsNullOrEmpty(s))
+            return "";
+
+        var sb = new StringBuilder(s.Length);
+        foreach (char c in s)
+        {
+            if (char.IsLetterOrDigit(c))
+                sb.Append(char.ToLowerInvariant(c));
+        }
+        return sb.ToString();
     }
 
     // Image.FromStream(stream) keeps a lazy dependency on the backing stream
