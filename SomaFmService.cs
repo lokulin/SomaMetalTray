@@ -2,6 +2,7 @@ using System;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Timer = System.Windows.Forms.Timer;
 
@@ -134,7 +135,7 @@ public sealed class SomaFmService : IDisposable
 
             JsonElement newest = songs[0];
 
-            string title = GetStringProperty(newest, "title") ?? "Unknown Track";
+            string title = StripLeadingTrackNumber(GetStringProperty(newest, "title") ?? "Unknown Track");
             string artist = GetStringProperty(newest, "artist") ?? StationTitle;
             string album = GetStringProperty(newest, "album") ?? "";
             string? art = GetStringProperty(newest, "albumArt")
@@ -161,6 +162,30 @@ public sealed class SomaFmService : IDisposable
             // Keep last known state and retry on the next tick - a single
             // failed fetch shouldn't disrupt playback or clear the display.
         }
+    }
+
+    // Some rips in this station's rotation carry an embedded track number in
+    // the title tag (e.g. "01 Ut av deg elv"). Stripped conservatively: only
+    // when the leading number is zero-padded (a real title essentially never
+    // starts with "01 ") or followed by a "." or "-" separator (the other
+    // common "01. Title" / "01 - Title" tagging convention) - a bare leading
+    // number with no such signal (e.g. "7 Cries", "1349") is left alone,
+    // since that's much more likely to be part of the actual title.
+    private static readonly Regex TrackNumberPrefix = new(@"^(?<num>\d{1,3})[\.\-_\s]+(?=\S)", RegexOptions.Compiled);
+
+    internal static string StripLeadingTrackNumber(string title)
+    {
+        Match match = TrackNumberPrefix.Match(title);
+        if (!match.Success)
+            return title;
+
+        string num = match.Groups["num"].Value;
+        bool looksLikeTrackNumber = (num.Length >= 2 && num[0] == '0') || match.Value.Contains('.') || match.Value.Contains('-');
+        if (!looksLikeTrackNumber)
+            return title;
+
+        string rest = title[match.Length..].TrimStart();
+        return rest.Length > 0 ? rest : title;
     }
 
     private static string? GetStringProperty(JsonElement element, string name)

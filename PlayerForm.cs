@@ -31,21 +31,24 @@ public sealed class PlayerForm : Form
     private static readonly Color GlowCore = Color.FromArgb(0xb5, 0x1f, 0x1f);
     private static readonly Color AccentColor = Color.FromArgb(0xc0, 0x30, 0x30);
 
+    private const int WindowHeight = 440;
+
     private const int ArtSize = 300;
     private const int ArtCornerRadius = 5;
     private const int ArtMarginLeft = 30;
     private const int ArtMarginTop = 26;   // shifted up now that the top-left station heading is gone
-    private const int ReflectionHeight = 120;
+    private const int ReflectionTop = ArtMarginTop + ArtSize + 2;      // 328
+    private const int ReflectionHeight = WindowHeight - ReflectionTop; // runs flush to the window's bottom edge
 
     private const int InfoLeft = ArtMarginLeft + ArtSize + 30; // 360
-    private const int TitleTop = 190;      // pulled down from the art's top, closer to the controls below
-    private const int ArtistTop = TitleTop + 64;                // 254
-    private const int AlbumTop = ArtistTop + 30;                 // 284
-    private const int ProgressTop = AlbumTop + 32;               // 316
+    private const int TitleTop = ArtMarginTop + ArtSize / 3;     // ~1/3 down the album art, 126
+    private const int ArtistTop = TitleTop + 64;                // 190
+    private const int AlbumTop = ArtistTop + 30;                 // 220
+    private const int ProgressTop = AlbumTop + 32;               // 252
     private const int ProgressHeight = 10;
-    private const int TimeLabelsTop = ProgressTop + ProgressHeight + 6; // 332
-    private const int StatusTop = TimeLabelsTop + 18 + 4;        // 354
-    private const int ControlsTop = StatusTop + 18 + 10;         // 382
+    private const int TimeLabelsTop = ProgressTop + ProgressHeight + 6; // 268
+    private const int StatusTop = TimeLabelsTop + 18 + 4;        // 290
+    private const int ControlsTop = StatusTop + 18 + 10;         // 318
 
     private const int LivePillWidth = 100;
     private const int LivePillHeight = 34;
@@ -122,7 +125,7 @@ public sealed class PlayerForm : Form
 
         Text = "SomaFM Metal Detector Player";
 
-        var size = new Size(900, 520);
+        var size = new Size(900, WindowHeight);
         MinimumSize = size;
         MaximumSize = size;
         ClientSize = size;
@@ -238,7 +241,7 @@ public sealed class PlayerForm : Form
 
         if (_currentReflection is not null)
         {
-            var reflectionRect = new Rectangle(ArtMarginLeft, artRect.Bottom + 2, ArtSize, ReflectionHeight);
+            var reflectionRect = new Rectangle(ArtMarginLeft, ReflectionTop, ArtSize, ReflectionHeight);
             DrawRoundedImage(g, reflectionRect, _currentReflection, ArtCornerRadius, null);
         }
 
@@ -399,6 +402,13 @@ public sealed class PlayerForm : Form
         _smtc = new SmtcService(Handle);
         _smtc.ButtonPressed += OnSmtcButtonPressed;
 
+        // Show the station's own logo as a placeholder immediately, rather
+        // than leaving the art panel blank until the first track's own
+        // artwork resolves (which can take a few seconds through the
+        // fanart.tv/Deezer/Bandcamp/iTunes chain). _somaFm.LogoUrl already
+        // has a sane hardcoded default even before channels.json has loaded.
+        _ = LoadPlaceholderArtAsync();
+
         try
         {
             await _audio.InitializeAsync();
@@ -452,6 +462,23 @@ public sealed class PlayerForm : Form
             // a second update moments later once art shows up.
             _ = UpdateArtworkAsync(metadata);
         }));
+    }
+
+    private async Task LoadPlaceholderArtAsync()
+    {
+        try
+        {
+            Image? logo = await _artwork.GetFallbackLogoAsync(_somaFm.LogoUrl, CancellationToken.None);
+            // Only apply it if a real track's artwork hasn't already resolved
+            // and won the race - this is purely a "don't sit blank while
+            // waiting" placeholder, never allowed to clobber real art.
+            if (logo is not null && _currentArt is null && !IsDisposed)
+                SetAlbumArt(logo);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"LoadPlaceholderArtAsync failed: {ex.Message}");
+        }
     }
 
     private async Task UpdateArtworkAsync(TrackMetadata metadata)

@@ -9,7 +9,6 @@ namespace SomaMetalTray;
 internal static class WindowChromeHelper
 {
     private const int DwmwaUseImmersiveDarkMode = 20;
-    private const int DwmwaBorderColor = 34;
     private const int DwmwaCaptionColor = 35;
     private const int DwmwaTextColor = 36;
 
@@ -32,14 +31,13 @@ internal static class WindowChromeHelper
         int textColorRef = ToColorRef(textColor);
         DwmSetWindowAttribute(hwnd, DwmwaTextColor, ref textColorRef, sizeof(int));
 
-        // Windows 11 also draws a thin 1px frame around the whole window in a
-        // separate "border" colour from the caption - left at its default,
-        // that shows up as a faint light seam right where the caption meets
-        // the client area. DWMWA_BORDER_COLOR (Windows 11 22000+ only; a
-        // no-op/failure on Windows 10, which this call ignores same as the
-        // others above) matches it to the same colour so the two blend.
-        int borderColorRef = ToColorRef(captionColor);
-        DwmSetWindowAttribute(hwnd, DwmwaBorderColor, ref borderColorRef, sizeof(int));
+        // Deliberately not also setting DWMWA_BORDER_COLOR here: a previous
+        // attempt at that (to match a separate 1px Windows 11 frame colour to
+        // the caption) turned out to be the actual cause of a visible seam
+        // right below the title bar, not a fix for one - DeathFmTray, which
+        // has no such seam, never sets it either. Left at its default,
+        // Windows blends the frame with the caption colour correctly on its
+        // own; explicitly setting it is what introduced the mismatch.
     }
 
     // Win32 COLORREF is 0x00BBGGRR.

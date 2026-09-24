@@ -165,8 +165,7 @@ public sealed class ArtworkService : IDisposable
         try
         {
             byte[] bytes = await _http.GetByteArrayAsync(logoUrl, ct);
-            using var ms = new MemoryStream(bytes);
-            var image = Image.FromStream(ms);
+            Image image = LoadIndependentImage(bytes);
 
             _fallbackLogo?.Dispose();
             _fallbackLogo = image;
@@ -201,7 +200,8 @@ public sealed class ArtworkService : IDisposable
     public string? GetCachedArtPath(string artist, string title)
     {
         string path = DiskCachePath(BuildCacheKey(artist, title), positive: true);
-        return File.Exists(path) ? path : null;
+        var info = new FileInfo(path);
+        return info.Exists && info.Length > 0 ? path : null;
     }
 
     // --- Source 1: fanart.tv (via a MusicBrainz recording -> release-group resolution) ---
@@ -237,8 +237,7 @@ public sealed class ArtworkService : IDisposable
                     continue;
 
                 byte[] bytes = await _http.GetByteArrayAsync(coverUrl, ct);
-                using var ms = new MemoryStream(bytes);
-                return Image.FromStream(ms);
+                return LoadIndependentImage(bytes);
             }
 
             return null;
@@ -337,8 +336,7 @@ public sealed class ArtworkService : IDisposable
                 return null;
 
             byte[] bytes = await _http.GetByteArrayAsync(coverUrl, ct);
-            using var ms = new MemoryStream(bytes);
-            return Image.FromStream(ms);
+            return LoadIndependentImage(bytes);
         }
         catch
         {
@@ -407,8 +405,7 @@ public sealed class ArtworkService : IDisposable
                     continue;
 
                 byte[] bytes = await _http.GetByteArrayAsync(coverUrl, ct);
-                using var ms = new MemoryStream(bytes);
-                return Image.FromStream(ms);
+                return LoadIndependentImage(bytes);
             }
 
             return null;
@@ -482,8 +479,7 @@ public sealed class ArtworkService : IDisposable
             string hiResUrl = artworkUrl100.Replace("100x100bb", "600x600bb");
 
             byte[] bytes = await _http.GetByteArrayAsync(hiResUrl, ct);
-            using var ms = new MemoryStream(bytes);
-            return Image.FromStream(ms);
+            return LoadIndependentImage(bytes);
         }
         catch
         {
@@ -503,11 +499,21 @@ public sealed class ArtworkService : IDisposable
         try
         {
             string imagePath = DiskCachePath(key, positive: true);
-            if (File.Exists(imagePath))
+            var imageInfo = new FileInfo(imagePath);
+            if (imageInfo.Exists)
             {
+                if (imageInfo.Length == 0)
+                {
+                    // A leftover 0-byte file from the Image.FromStream/disposed-
+                    // stream bug this class used to have (see LoadIndependentImage)
+                    // - self-heal by deleting it and falling through to a normal
+                    // re-fetch rather than treating it as a valid cache hit.
+                    File.Delete(imagePath);
+                    return (null, false, false);
+                }
+
                 byte[] bytes = File.ReadAllBytes(imagePath);
-                using var ms = new MemoryStream(bytes);
-                return (Image.FromStream(ms), false, false);
+                return (LoadIndependentImage(bytes), false, false);
             }
 
             string missPath = DiskCachePath(key, positive: false);
@@ -559,6 +565,25 @@ public sealed class ArtworkService : IDisposable
         {
             // Best-effort.
         }
+    }
+
+    // Image.FromStream(stream) keeps a lazy dependency on the backing stream
+    // for pixel decoding - it is NOT safe to dispose that stream once
+    // FromStream returns despite how common the "using var ms = ...; return
+    // Image.FromStream(ms);" pattern looks. Every call site here used to do
+    // exactly that, which silently corrupted the image the moment its source
+    // MemoryStream got disposed: drawing it in-app happened to still work
+    // (already decoded/cached internally by GDI+ by that point), but calling
+    // .Save() on it later (see TrySaveToDisk) failed - caught by that
+    // method's own catch-all - leaving a 0-byte .jpg on disk that still
+    // passed File.Exists, so SMTC/toast notifications got handed a corrupt,
+    // empty "art" file. Wrapping the load in a Bitmap copy here makes the
+    // returned Image fully independent of the source stream.
+    private static Image LoadIndependentImage(byte[] bytes)
+    {
+        using var ms = new MemoryStream(bytes);
+        using var loaded = Image.FromStream(ms);
+        return new Bitmap(loaded);
     }
 
     private static string BuildCacheKey(string artist, string title) =>
