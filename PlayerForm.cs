@@ -508,16 +508,14 @@ public sealed class PlayerForm : Form
             UpdateProgress();
 
             if (_isPlaying)
-            {
                 _lastFm.OnTrackChanged(metadata);
-                _discord.OnTrackChanged(metadata);
-            }
 
-            // SMTC/toast metadata (including art) is pushed once artwork
-            // resolves - see UpdateArtworkAsync - rather than here, since
-            // SomaFM's own feed never supplies art (TrackMetadata.ArtUrl is
-            // always empty) and pushing text-only metadata first just means
-            // a second update moments later once art shows up.
+            // SMTC/toast/Discord metadata that needs art is pushed once
+            // artwork resolves - see UpdateArtworkAsync - rather than here,
+            // since SomaFM's own feed never supplies art (TrackMetadata.ArtUrl
+            // is always empty) and pushing text-only metadata first just
+            // means a second update moments later once art shows up. Last.fm
+            // scrobbling doesn't use art, so it fires immediately above.
             _ = UpdateArtworkAsync(metadata);
         }));
     }
@@ -577,7 +575,20 @@ public sealed class PlayerForm : Form
         if (_smtc is not null)
             await _smtc.UpdateMetadataAsync(metadata.Title, metadata.Artist, metadata.Album, artPath);
         _trackChangeNotifier.OnMetadataChanged(metadata, artPath);
+
+        if (_isPlaying)
+            _discord.OnTrackChanged(metadata, ResolveDiscordArtUrl(metadata));
     }
+
+    /// <summary>
+    /// A public, fetchable URL for Discord Rich Presence's image field - NOT
+    /// TrackMetadata.ArtUrl (SomaFM's feed never supplies one). Prefers
+    /// whichever remote source ArtworkService's chain resolved to for this
+    /// track (see GetCachedArtSourceUrl); falls back to the station's own
+    /// logo URL, which is itself always a valid public URL.
+    /// </summary>
+    private string? ResolveDiscordArtUrl(TrackMetadata metadata) =>
+        _artwork.GetCachedArtSourceUrl(metadata.Artist, metadata.Title) ?? _somaFm.LogoUrl;
 
     private void SetAlbumArt(Image? art)
     {
@@ -716,7 +727,7 @@ public sealed class PlayerForm : Form
                 // will fire for it - feed it in directly here instead of
                 // waiting for the next track change.
                 _lastFm.OnTrackChanged(current);
-                _discord.OnTrackChanged(current);
+                _discord.OnTrackChanged(current, ResolveDiscordArtUrl(current));
             }
 
             Invalidate();
