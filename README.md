@@ -183,3 +183,14 @@ looks wrong without attaching a debugger.
 - **No automated tests** - `SomaFmService`/`ArtworkService`/`AudioPlayerService`
   would benefit from unit tests against recorded fixture responses, especially
   given how defensively they have to parse undocumented endpoints.
+- **Possible future migration: WinForms -> Avalonia**. Would mean rewriting
+  the custom-painted UI (`PlayerForm`, `PlaybackControls`, `WindowChromeHelper`,
+  `SettingsForm` - ~1800 lines) in Avalonia's XAML/rendering model; everything
+  else (SMTC, Discord/Last.fm, WinRT `MediaPlayer`, AUMID/startup) is
+  UI-agnostic and would carry over unchanged. Not for cross-platform reach -
+  this app is deeply Windows-coupled (WinRT APIs, SMTC, AUMID) so that
+  wouldn't buy anything - but Avalonia's VS Code extension has a live XAML
+  previewer, which is the closest thing to a visual GUI designer VS Code
+  offers today (neither the WinForms nor WPF designer works outside full
+  Visual Studio). Would be done as a parallel branch rather than an in-place
+  edit given the size of the rewrite.
