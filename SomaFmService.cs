@@ -87,8 +87,20 @@ public sealed class SomaFmService : IDisposable
         {
             using JsonDocument doc = JsonDocument.Parse(await _http.GetStringAsync(ChannelsUrl));
 
-            // channels.json is a top-level array of channel objects; find "metal".
-            foreach (JsonElement channel in doc.RootElement.EnumerateArray())
+            // channels.json is actually {"channels": [...]}, not a bare
+            // top-level array as originally assumed here - that assumption
+            // made EnumerateArray() throw on every real response, silently
+            // caught below, so this method has never actually read live
+            // channel branding before now. Handle both shapes defensively,
+            // same spirit as PollSongsAsync's array-or-object handling.
+            JsonElement channels = doc.RootElement.ValueKind == JsonValueKind.Array
+                ? doc.RootElement
+                : doc.RootElement.TryGetProperty("channels", out JsonElement channelsEl) ? channelsEl : default;
+
+            if (channels.ValueKind != JsonValueKind.Array)
+                return;
+
+            foreach (JsonElement channel in channels.EnumerateArray())
             {
                 string? id = GetStringProperty(channel, "id");
                 if (!string.Equals(id, ChannelId, StringComparison.OrdinalIgnoreCase))
