@@ -1047,17 +1047,6 @@ public sealed class PlayerForm : Form
     /// </summary>
     public async Task ConnectLastFmAsync()
     {
-        if (!_lastFm.IsConfigured)
-        {
-            MessageBox.Show(
-                "Add a Last.fm API key and secret in Settings first " +
-                "(get one free at last.fm/api/account/create), then try again.",
-                "Metal Detector",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
-            return;
-        }
-
         try
         {
             string token = await _lastFm.GetAuthTokenAsync();

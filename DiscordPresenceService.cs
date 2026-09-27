@@ -22,7 +22,7 @@ public sealed class DiscordPresenceService : IDisposable
         _settings = settings;
     }
 
-    public bool IsConfigured => _settings.DiscordPresenceEnabled && !string.IsNullOrEmpty(_settings.DiscordClientId);
+    public bool IsConfigured => _settings.DiscordPresenceEnabled;
 
     /// <summary>Opens the connection to Discord's local RPC pipe. Safe to call even if Discord isn't running yet.</summary>
     public void Start()
@@ -30,11 +30,11 @@ public sealed class DiscordPresenceService : IDisposable
         if (!IsConfigured || _client is not null)
             return;
 
-        _client = new DiscordRpcClient(_settings.DiscordClientId);
+        _client = new DiscordRpcClient(AppCredentials.DiscordClientId);
         _client.Initialize();
     }
 
-    /// <summary>Tears down and re-opens the connection - used after the Client ID/enabled toggle is changed via the settings dialog.</summary>
+    /// <summary>Tears down and re-opens the connection - used after the enabled toggle is changed via the settings dialog.</summary>
     public void Restart()
     {
         _client?.Dispose();
@@ -67,7 +67,7 @@ public sealed class DiscordPresenceService : IDisposable
         // is configured (uploaded under Rich Presence -> Art Assets in the
         // Discord Developer Portal for your own application) when there's no
         // resolved art at all for this track.
-        string? imageKey = !string.IsNullOrEmpty(remoteArtUrl) ? remoteArtUrl : _settings.DiscordDefaultImageKey;
+        string? imageKey = !string.IsNullOrEmpty(remoteArtUrl) ? remoteArtUrl : AppCredentials.DiscordDefaultImageKey;
         if (!string.IsNullOrEmpty(imageKey))
         {
             presence.Assets = new Assets

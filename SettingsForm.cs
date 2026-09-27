@@ -6,9 +6,13 @@ namespace SomaMetalTray;
 
 /// <summary>
 /// Editor for the settings that would otherwise require hand-editing
-/// %AppData%\SomaMetalTray\settings.json: Last.fm/Discord/fanart.tv API
-/// credentials. Everything else (start with Windows, minimize to tray, etc.)
-/// already has its own tray/system menu checkbox and doesn't need a dialog.
+/// %AppData%\SomaMetalTray\settings.json. Last.fm's API key/secret and the
+/// Discord Client ID/default image key/fanart.tv API key are this app's own
+/// compiled-in identifiers (see AppCredentials) rather than something each
+/// user has to register/paste in, so the only thing left here is connecting
+/// your own Last.fm account. Everything else (start with Windows, minimize
+/// to tray, etc.) already has its own tray/system menu checkbox and doesn't
+/// need a dialog.
 ///
 /// SomaMetalTray only ever plays one channel (SomaFM's Metal Detector), so
 /// unlike DeathFmTray's settings this has no station-switching UI.
@@ -18,15 +22,8 @@ public sealed class SettingsForm : Form
     private readonly AppSettings _settings;
     private readonly PlayerForm _playerForm;
 
-    private readonly TextBox _lastFmApiKeyBox = new() { Dock = DockStyle.Fill };
-    private readonly TextBox _lastFmApiSecretBox = new() { Dock = DockStyle.Fill, UseSystemPasswordChar = true };
     private readonly Label _lastFmStatusLabel = new() { AutoSize = true, Anchor = AnchorStyles.Left };
     private readonly Button _lastFmConnectButton = new() { Width = 100, Anchor = AnchorStyles.Left };
-
-    private readonly TextBox _discordClientIdBox = new() { Dock = DockStyle.Fill };
-    private readonly TextBox _discordImageKeyBox = new() { Dock = DockStyle.Fill };
-
-    private readonly TextBox _fanArtTvApiKeyBox = new() { Dock = DockStyle.Fill, UseSystemPasswordChar = true };
 
     public SettingsForm(AppSettings settings, PlayerForm playerForm)
     {
@@ -38,7 +35,7 @@ public sealed class SettingsForm : Form
         MaximizeBox = false;
         MinimizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(480, 370);
+        ClientSize = new Size(480, 160);
         Padding = new Padding(16);
 
         HandleCreated += (_, _) => WindowChromeHelper.ApplyDarkTitleBar(
@@ -47,12 +44,6 @@ public sealed class SettingsForm : Form
             textColor: Color.White);
 
         BuildLayout();
-
-        _lastFmApiKeyBox.Text = _settings.LastFmApiKey ?? "";
-        _lastFmApiSecretBox.Text = _settings.LastFmApiSecret ?? "";
-        _discordClientIdBox.Text = _settings.DiscordClientId ?? "";
-        _discordImageKeyBox.Text = _settings.DiscordDefaultImageKey ?? "";
-        _fanArtTvApiKeyBox.Text = _settings.FanArtTvApiKey ?? "";
 
         UpdateLastFmStatus();
     }
@@ -63,7 +54,7 @@ public sealed class SettingsForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 2,
-            RowCount = 12,
+            RowCount = 3,
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -76,55 +67,11 @@ public sealed class SettingsForm : Form
         layout.SetColumnSpan(layout.GetControlFromPosition(0, row)!, 2);
         row++;
 
-        layout.Controls.Add(new Label { Text = "API key:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
-        layout.Controls.Add(_lastFmApiKeyBox, 1, row);
-        row++;
-
-        layout.Controls.Add(new Label { Text = "Shared secret:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
-        layout.Controls.Add(_lastFmApiSecretBox, 1, row);
-        row++;
-
         _lastFmConnectButton.Click += OnLastFmConnectClicked;
         layout.Controls.Add(_lastFmConnectButton, 1, row);
         row++;
 
         layout.Controls.Add(_lastFmStatusLabel, 1, row);
-        row++;
-
-        layout.Controls.Add(new Panel { Height = 10 }, 0, row);
-        row++;
-
-        layout.Controls.Add(SectionHeader("Discord Rich Presence"), 0, row);
-        layout.SetColumnSpan(layout.GetControlFromPosition(0, row)!, 2);
-        row++;
-
-        layout.Controls.Add(new Label { Text = "Client ID:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
-        layout.Controls.Add(_discordClientIdBox, 1, row);
-        row++;
-
-        layout.Controls.Add(new Label { Text = "Default image key:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
-        layout.Controls.Add(_discordImageKeyBox, 1, row);
-        row++;
-
-        layout.Controls.Add(new Panel { Height = 10 }, 0, row);
-        row++;
-
-        layout.Controls.Add(SectionHeader("Album art (fanart.tv)"), 0, row);
-        layout.SetColumnSpan(layout.GetControlFromPosition(0, row)!, 2);
-        row++;
-
-        layout.Controls.Add(new Label { Text = "API key:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, row);
-        layout.Controls.Add(_fanArtTvApiKeyBox, 1, row);
-        row++;
-
-        var fanArtHint = new Label
-        {
-            Text = "Optional - get a free personal key at fanart.tv/get-an-api-key.\nWithout one, artwork lookup falls back to Deezer, then iTunes.",
-            AutoSize = true,
-            ForeColor = SystemColors.GrayText,
-            Font = new Font(Control.DefaultFont.FontFamily, 8f),
-        };
-        layout.Controls.Add(fanArtHint, 1, row);
 
         Controls.Add(layout);
 
@@ -176,10 +123,6 @@ public sealed class SettingsForm : Form
         }
         else
         {
-            // Commit the key/secret immediately so Connect works right after
-            // typing them in, without needing a separate Save step first.
-            _settings.LastFmApiKey = _lastFmApiKeyBox.Text.Trim();
-            _settings.LastFmApiSecret = _lastFmApiSecretBox.Text.Trim();
             await _playerForm.ConnectLastFmAsync();
         }
 
@@ -188,11 +131,6 @@ public sealed class SettingsForm : Form
 
     private void OnSaveClicked(object? sender, EventArgs e)
     {
-        _settings.LastFmApiKey = _lastFmApiKeyBox.Text.Trim();
-        _settings.LastFmApiSecret = _lastFmApiSecretBox.Text.Trim();
-        _settings.DiscordClientId = _discordClientIdBox.Text.Trim();
-        _settings.DiscordDefaultImageKey = _discordImageKeyBox.Text.Trim();
-        _settings.FanArtTvApiKey = _fanArtTvApiKeyBox.Text.Trim();
         SettingsStore.Save(_settings);
 
         _playerForm.RestartDiscordPresence();

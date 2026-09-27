@@ -20,9 +20,8 @@ namespace SomaMetalTray;
 ///   1. fanart.tv - best art when it has coverage, but keyed by MusicBrainz
 ///      release-group ID rather than free-text search, so this resolves
 ///      artist+title -> a MusicBrainz recording -> its release-group first.
-///      Entirely optional: skipped outright if no API key is configured
-///      (AppSettings.FanArtTvApiKey, set via Settings - see SettingsForm),
-///      and any failure/403 just falls through to the next source.
+///      Uses this app's own compiled-in key (AppCredentials.FanArtTvApiKey);
+///      any failure/403 just falls through to the next source.
 ///   2. Deezer - no auth needed, free-text search, this is the workhorse in
 ///      practice (broad catalog, no key to configure, no MusicBrainz
 ///      round-trip first).
@@ -260,9 +259,7 @@ public sealed class ArtworkService : IDisposable
 
     private async Task<(Image? Image, string? SourceUrl, TimeSpan? Duration)> TryFetchFromFanArtTvAsync(string artist, string title, string album, CancellationToken ct)
     {
-        string? apiKey = _settings.FanArtTvApiKey;
-        if (string.IsNullOrWhiteSpace(apiKey))
-            return (null, null, null); // Not configured - skip straight to Deezer, no error.
+        string apiKey = AppCredentials.FanArtTvApiKey;
 
         try
         {

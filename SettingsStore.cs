@@ -22,34 +22,19 @@ public sealed class AppSettings
     // element for a separate VolumeService to wrap here).
     public double? Volume { get; set; }
 
-    // Last.fm scrobbling. LastFmApiKey/LastFmApiSecret identify this app to
-    // Last.fm's API - register a free one at last.fm/api/account/create and
-    // paste them in here (not committed to source, since this file lives
-    // under %AppData%, well away from the git repo). LastFmSessionKey/
-    // LastFmUsername are filled in automatically by the "Connect Last.fm..."
-    // flow once you've authorized the app in your browser.
-    public string? LastFmApiKey { get; set; }
-    public string? LastFmApiSecret { get; set; }
+    // Last.fm scrobbling. The API key/secret identifying this app to Last.fm's
+    // API are compiled-in constants (see AppCredentials), not per-user
+    // settings. LastFmSessionKey/LastFmUsername are filled in automatically
+    // by the "Connect Last.fm..." flow once you've authorized the app in
+    // your browser.
     public string? LastFmSessionKey { get; set; }
     public string? LastFmUsername { get; set; }
 
-    // Discord Rich Presence. Register a free application at
-    // discord.com/developers/applications to get a Client ID - no OAuth/user
-    // consent needed beyond that, unlike Last.fm, since this only talks to
-    // your own already-running Discord desktop client over a local pipe.
-    // DiscordDefaultImageKey is optional: the asset key of an image uploaded
-    // under Rich Presence -> Art Assets for that application, shown when the
-    // current track has no album art of its own yet.
-    public string? DiscordClientId { get; set; }
-    public string? DiscordDefaultImageKey { get; set; }
+    // Discord Rich Presence. The Client ID/default image key are compiled-in
+    // constants (see AppCredentials) - no OAuth/user consent needed beyond
+    // that, unlike Last.fm, since this only talks to your own
+    // already-running Discord desktop client over a local pipe.
     public bool DiscordPresenceEnabled { get; set; } = true;
-
-    // Optional. ArtworkService's fanart.tv lookup (first in its source chain,
-    // ahead of Deezer/iTunes) is skipped entirely when this is empty - a
-    // fanart.tv personal API key isn't provisioned anywhere for this project
-    // yet, so this just sits unused until one is added here. Get a free
-    // personal key at fanart.tv/get-an-api-key.
-    public string? FanArtTvApiKey { get; set; }
 }
 
 /// <summary>Reads/writes AppSettings as JSON under %AppData%\SomaMetalTray\settings.json.</summary>

@@ -106,10 +106,9 @@ usual triggers to. Left-clicking the app icon no longer opens the system menu
    resolves artist+title to a MusicBrainz recording -> release-group (two
    free, unauthenticated MusicBrainz API calls, rate-limited to <=1/sec per
    their usage policy), checking the recording's own artist credit before
-   trusting it. Entirely optional - skipped outright if no API key is
-   configured, and any failure/403 just falls through to Deezer. Get a free
-   personal key at [fanart.tv/get-an-api-key](https://fanart.tv/get-an-api-key)
-   and paste it into Settings -> Album art (fanart.tv).
+   trusting it. Uses this app's own compiled-in fanart.tv API key (see
+   "API keys / secrets" below) - nothing to set up - and any failure/403 just
+   falls through to Deezer.
 2. **Deezer** - `api.deezer.com/search`, no auth needed. The workhorse in
    practice: broad catalog, no key to configure, no MusicBrainz round-trip.
 3. **Bandcamp** - a lot of this station's more obscure/underground bands are
@@ -143,13 +142,20 @@ length in seconds when Deezer, iTunes, or MusicBrainz reported one (see
 
 ## API keys / secrets
 
-Last.fm, Discord, and fanart.tv credentials are all optional and entered via
-the Settings dialog (tray icon -> Settings..., or right-click the title bar
--> Settings...). They're written to `%AppData%\SomaMetalTray\settings.json`,
-well outside this repo - **never commit that file or paste a real key into
-anything that gets committed** (the repo's `.gitignore` also excludes a
-stray `settings.json` dropped in the project directory during local testing,
-as a second line of defense).
+Last.fm's API key/secret, the Discord Rich Presence Client ID/default image
+key, and the fanart.tv API key are this app's own registered application
+identifiers, compiled in as constants (`AppCredentials.cs`) - there's nothing
+to register or paste in to use scrobbling, Discord presence, or album art
+lookup. None of these identify or grant access to *your* account: Last.fm
+scrobbling still requires you to link your own account once via the
+Settings dialog's Connect button (tray icon -> Settings..., or right-click
+the title bar -> Settings...), which runs Last.fm's normal browser-based
+authorization flow and stores the resulting per-user session key in
+`%AppData%\SomaMetalTray\settings.json` - **never commit that file** (the
+repo's `.gitignore` also excludes a stray `settings.json` dropped in the
+project directory during local testing, as a second line of defense).
+Discord Rich Presence and album art lookup work automatically with no setup
+at all; Discord presence can be turned off if you don't want it.
 
 ## Building and running
 
