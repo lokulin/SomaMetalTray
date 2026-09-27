@@ -62,10 +62,5 @@ jobs:
 
       - name: Notify Death.FM Players site to rebuild
         if: startsWith(github.ref, 'refs/tags/')
-        continue-on-error: true # don't fail the release if the site secret isn't set up yet
-        run: |
-          curl -X POST \
-            -H "Authorization: token ${{ secrets.SITE_DISPATCH_TOKEN }}" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/lokulin/DeathFmSite/dispatches \
-            -d '{"event_type":"release-published"}'
+        continue-on-error: true # don't fail the release if the deploy hook secret isn't set up yet
+        run: curl -X POST "${{ secrets.CLOUDFLARE_DEPLOY_HOOK_URL }}"
