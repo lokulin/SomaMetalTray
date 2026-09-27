@@ -52,18 +52,16 @@ notifications on track change, start-at-startup, and minimize-to-tray.
 ## Custom borderless window chrome
 
 The window uses `FormBorderStyle.None` with a hand-painted title bar
-(`PlayerForm.DrawTitleBar`) rather than a native caption. This was a
-deliberate fix, not a stylistic choice from the start: a standard
-`FixedSingle` native title bar always left a faint 1px seam where it met the
-custom gradient background, and no `DwmSetWindowAttribute` colour customization
-removed it (confirmed via a magenta `DWMWA_BORDER_COLOR` diagnostic - DeathFmTray
-reports an identical native frame thickness despite having no visible seam,
-so the difference was contrast against DeathFmTray's brighter content, not a
-missing DWM attribute here). Dragging the window and the right-click system
+(`PlayerForm.DrawTitleBar`) rather than a native caption. A standard
+`FixedSingle` native title bar leaves a faint 1px seam where it meets the
+custom gradient background; no `DwmSetWindowAttribute` colour customization
+removes it, since the native frame itself is the same thickness DeathFmTray
+uses - the seam is just more visible against this app's darker background,
+not a missing DWM attribute. Dragging the window and the right-click system
 menu are both hand-implemented in `WindowChromeHelper`/`PlayerForm.OnMouseDown`
 since a borderless window has no native caption for Windows to attach its
-usual triggers to. Left-clicking the app icon no longer opens the system menu
-(right-click anywhere in the title strip does) - a known, accepted tradeoff.
+usual triggers to. Left-clicking the app icon does not open the system menu;
+right-click anywhere in the title strip does.
 
 ## SomaFM endpoints used
 
@@ -114,7 +112,7 @@ usual triggers to. Left-clicking the app icon no longer opens the system menu
 3. **Bandcamp** - a lot of this station's more obscure/underground bands are
    only on Bandcamp. Uses the same undocumented autocomplete endpoint
    Bandcamp's own site search box calls; **still unverified against a real
-   response** (every attempt from the original dev sandbox got IP-blocked) -
+   response** (the endpoint has IP-blocked every test attempt so far) -
    fails soft into iTunes if the guessed response shape is wrong.
 4. **iTunes** - `itunes.apple.com/search`, last-resort fallback. Tops out at
    a lower resolution (upscaled from `100x100bb` to `600x600bb`) and has
