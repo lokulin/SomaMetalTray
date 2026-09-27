@@ -30,6 +30,13 @@ internal static class AumidShortcutHelper
             if (string.IsNullOrEmpty(exePath) || !File.Exists(exePath))
                 return;
 
+            // Skip dev/debug build output entirely - otherwise every `dotnet run`/F5
+            // from the repo silently hijacks the real Start Menu shortcut away from
+            // the actual install (e.g. under Program Files) to point at a throwaway
+            // bin\Debug\... path instead.
+            if (IsDevBuildOutputPath(exePath))
+                return;
+
             string programsDir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 @"Microsoft\Windows\Start Menu\Programs");
@@ -44,6 +51,13 @@ internal static class AumidShortcutHelper
         {
             // Never prevent the app from launching.
         }
+    }
+
+    private static bool IsDevBuildOutputPath(string exePath)
+    {
+        string normalized = exePath.Replace('/', '\\');
+        return normalized.Contains(@"\bin\Debug\", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains(@"\bin\Release\", StringComparison.OrdinalIgnoreCase);
     }
 
     private static void CreateBasicShortcut(string shortcutPath, string exePath)
