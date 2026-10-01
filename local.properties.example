@@ -5,6 +5,6 @@ SPACESTATION_URL=https://spacestation.l6n.uk
 SPACESTATION_CF_ACCESS_CLIENT_ID=
 SPACESTATION_CF_ACCESS_CLIENT_SECRET=
 
-# Optional: play Death.FM through the DeathFmCastReceiver's buffering proxy (starts instantly, no buffering pauses) instead of
-# directly from death.fm. It's your Cloudflare Worker, so only builds that set this use it; public builds play directly.
-DEATHFM_STREAM_PROXY_URL=https://deathfm-cast.l6n.uk/proxy/deathfm-live
+# Optional, OFF by default: play Death.FM through the DeathFmCastReceiver's buffering proxy instead of directly from death.fm. It
+# only helps while its connection is warm (about one fewer start-up pause). It's your Cloudflare Worker, so only builds that set this use it; public builds play directly.
+# DEATHFM_STREAM_PROXY_URL=https://deathfm-cast.l6n.uk/proxy/deathfm-live
