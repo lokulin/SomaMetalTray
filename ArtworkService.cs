@@ -43,7 +43,7 @@ namespace SomaMetalTray;
 /// on this station return zero results everywhere - very underground stuff
 /// that was never released commercially. So lookups are cached aggressively:
 /// in memory for the process lifetime, and on disk under
-/// %LOCALAPPDATA%\SomaMetalTray\ArtCache, so a restart doesn't re-spend
+/// %LOCALAPPDATA%\BlastbeatPlayer\ArtCache, so a restart doesn't re-spend
 /// rate-limit budget re-fetching tracks already looked up before. A "no art
 /// anywhere" result is cached too (with a shorter TTL, so a track that's
 /// simply not out yet isn't retried forever, but also isn't re-hammered
@@ -84,12 +84,10 @@ public sealed class ArtworkService : IDisposable
         // MusicBrainz requires a descriptive User-Agent identifying the app
         // (with a way to contact the maintainer); the other sources don't
         // require it but it's good citizenship to identify ourselves anyway.
-        _http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("SomaMetalTray", "0.1"));
+        _http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue(AppInfo.UserAgentProduct, UpdateChecker.CurrentVersion().ToString(3)));
         _http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("(+https://github.com/lokulin/SomaMetalTray)"));
 
-        _diskCacheDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "SomaMetalTray", "ArtCache");
+        _diskCacheDir = Path.Combine(AppInfo.LocalDir, "ArtCache");
     }
 
     public void Dispose()
@@ -112,7 +110,7 @@ public sealed class ArtworkService : IDisposable
     /// consumers (Discord Rich Presence) that need a public URL rather than a
     /// local file.
     /// </summary>
-    public async Task<Image?> GetArtworkAsync(string artist, string title, string album, CancellationToken ct)
+    public async Task<Image?> GetArtworkAsync(string artist, string title, string album, CancellationToken ct, string? directArtUrl = null)
     {
         string key = BuildCacheKey(artist, title);
 
@@ -137,7 +135,10 @@ public sealed class ArtworkService : IDisposable
                 return null;
             }
 
-            (Image? Image, string? SourceUrl, TimeSpan? Duration) fetched = await TryFetchFromFanArtTvAsync(artist, title, album, ct);
+            // A station that supplies its own cover art (Death.FM's CoverLink) wins
+            // over searching for it - the lookup chain only runs if that fails.
+            (Image? Image, string? SourceUrl, TimeSpan? Duration) fetched = await TryFetchDirectAsync(directArtUrl, ct);
+            if (fetched.Image is null) fetched = await TryFetchFromFanArtTvAsync(artist, title, album, ct);
             if (fetched.Image is null) fetched = await TryFetchFromDeezerAsync(artist, title, ct);
             if (fetched.Image is null) fetched = await TryFetchFromBandcampAsync(artist, title, ct);
             if (fetched.Image is null) fetched = await TryFetchFromItunesAsync(artist, title, ct);
@@ -253,6 +254,28 @@ public sealed class ArtworkService : IDisposable
         string path = DiskCachePath(BuildCacheKey(artist, title), positive: true);
         var info = new FileInfo(path);
         return info.Exists && info.Length > 0 ? path : null;
+    }
+
+    // --- Source 0: art URL supplied by the station's own now-playing feed ---
+
+    private async Task<(Image? Image, string? SourceUrl, TimeSpan? Duration)> TryFetchDirectAsync(string? url, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return (null, null, null);
+
+        try
+        {
+            byte[] bytes = await _http.GetByteArrayAsync(url, ct);
+            return (LoadIndependentImage(bytes), url, null);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            return (null, null, null);
+        }
     }
 
     // --- Source 1: fanart.tv (via a MusicBrainz recording -> release-group resolution) ---

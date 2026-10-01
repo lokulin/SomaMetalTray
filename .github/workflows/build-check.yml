@@ -27,3 +27,6 @@ jobs:
 
       - name: Build
         run: dotnet build SomaMetalTray.csproj -c Release --no-restore
+
+      - name: Test
+        run: dotnet test tests/SomaMetalTray.Tests -c Release

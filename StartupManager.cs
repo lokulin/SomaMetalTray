@@ -11,7 +11,7 @@ namespace SomaMetalTray;
 public static class StartupManager
 {
     private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    private const string ValueName = "SomaMetalTray";
+    private const string ValueName = "BlastbeatPlayer";
 
     public static bool IsEnabled()
     {

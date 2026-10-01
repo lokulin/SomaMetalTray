@@ -132,6 +132,32 @@ public sealed class LastFmScrobbler : IDisposable
         }
     }
 
+    /// <summary>Loves or un-loves a track on the connected Last.fm account. Returns false (never throws) if not connected or the call fails.</summary>
+    public async Task<bool> SetLovedAsync(string artist, string title, bool loved)
+    {
+        if (!IsAuthorized)
+            return false;
+
+        try
+        {
+            var parameters = new SortedDictionary<string, string>
+            {
+                ["method"] = loved ? "track.love" : "track.unlove",
+                ["artist"] = artist,
+                ["track"] = title,
+                ["api_key"] = AppCredentials.LastFmApiKey,
+                ["sk"] = _settings.LastFmSessionKey!,
+            };
+            using JsonDocument doc = await PostSignedAsync(parameters);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"Last.fm {(loved ? "love" : "unlove")} failed: {ex.Message}");
+            return false;
+        }
+    }
+
     /// <summary>Step 1 of the desktop auth flow: get an unauthorized request token.</summary>
     public async Task<string> GetAuthTokenAsync()
     {

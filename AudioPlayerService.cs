@@ -1,9 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Net.NetworkInformation;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Win32;
+using Timer = System.Threading.Timer;
 using Windows.Media.Core;
 using Windows.Media.Playback;
 
@@ -19,7 +23,7 @@ public enum PlaybackState
 }
 
 /// <summary>
-/// Plays SomaFM's Metal Detector stream directly via Windows.Media.Playback.MediaPlayer
+/// Plays the selected station's stream directly via Windows.Media.Playback.MediaPlayer
 /// (WinRT - already available through the net10.0-windows10.0.19041.0 TFM, same as
 /// SmtcService's Windows.Media.SystemMediaTransportControls, no extra package needed).
 ///
@@ -42,25 +46,9 @@ public enum PlaybackState
 /// </summary>
 public sealed class AudioPlayerService : IDisposable
 {
-    // SomaFM's per-channel .pls playlists live at api.somafm.com/<channel><bitrate>.pls -
-    // "metal130" is the channel's 128kbps AAC stream, the same one somafm.com's own web
-    // player defaults to.
-    private const string PlsUrl = "https://api.somafm.com/metal130.pls";
-
-    // Used only if the .pls fetch itself fails outright (e.g. no network at startup) -
-    // SomaFM's ice server hostnames follow a well-known ice<N>.somafm.com/<channel>-<bitrate>-<format>
-    // pattern; these are a last-resort fallback so playback can still be attempted while
-    // AudioPlayerService keeps retrying a fresh .pls fetch in the background.
-    private static readonly string[] FallbackStreamUrls =
-    {
-        "https://ice1.somafm.com/metal-128-mp3",
-        "https://ice2.somafm.com/metal-128-mp3",
-        "https://ice4.somafm.com/metal-128-mp3",
-        "https://ice5.somafm.com/metal-128-mp3",
-    };
-
     private readonly HttpClient _http;
     private readonly AppSettings _settings;
+    private IStation _station;
 
     // The live MediaPlayer for the current play session - null whenever
     // nothing is playing/starting. Recreated from scratch on every Play(),
@@ -73,6 +61,15 @@ public sealed class AudioPlayerService : IDisposable
     private bool _userWantsPlaying;
     private bool _disposed;
 
+    // Self-healing (see CheckForStall / OnPowerModeChanged / OnNetworkAvailabilityChanged): a live stream that
+    // loses its connection doesn't always raise MediaFailed - it can sit in "buffering" forever, and a PC coming
+    // back from sleep has a dead socket. These bring playback back without the user touching anything.
+    private static readonly TimeSpan StallTimeout = TimeSpan.FromSeconds(25);
+    private readonly Timer _watchdog;
+    private PlaybackState _lastState = PlaybackState.Stopped;
+    private long _lastStateChangeTicks = Stopwatch.GetTimestamp();
+    private int _recovering; // 1 while a recovery attempt is already in flight
+
     /// <summary>
     /// Raised whenever playback state changes. May be raised on a background
     /// (MTA) thread, same caveat as SmtcService.ButtonPressed - callers that
@@ -80,13 +77,18 @@ public sealed class AudioPlayerService : IDisposable
     /// </summary>
     public event Action<PlaybackState>? PlaybackStateChanged;
 
-    public AudioPlayerService(AppSettings settings)
+    public AudioPlayerService(AppSettings settings, IStation station)
     {
         _settings = settings;
+        _station = station;
         _volume = Math.Clamp(_settings.Volume ?? 0.8, 0.0, 1.0);
 
         _http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
-        _http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("SomaMetalTray", "0.1"));
+        _http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue(AppInfo.UserAgentProduct, UpdateChecker.CurrentVersion().ToString(3)));
+
+        SystemEvents.PowerModeChanged += OnPowerModeChanged;
+        NetworkChange.NetworkAvailabilityChanged += OnNetworkAvailabilityChanged;
+        _watchdog = new Timer(_ => CheckForStall(), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
     }
 
     /// <summary>Volume as 0.0-1.0. Setting it both applies it live (if a MediaPlayer is currently live) and persists it (this is the one place that owns volume persistence).</summary>
@@ -104,12 +106,23 @@ public sealed class AudioPlayerService : IDisposable
         }
     }
 
-    /// <summary>Fetches and parses the channel's .pls playlist. Call once at startup, before the first Play().</summary>
+    public IStation Station => _station;
+
+    /// <summary>Stops playback and points the player at another station. Call <see cref="InitializeAsync"/> afterwards.</summary>
+    public void SetStation(IStation station)
+    {
+        Stop();
+        _station = station;
+        _streamUrls = new List<string>();
+        _streamUrlIndex = 0;
+    }
+
+    /// <summary>Resolves the current station's stream URLs. Call at startup and after <see cref="SetStation"/>, before Play().</summary>
     public async Task InitializeAsync()
     {
-        _streamUrls = await FetchPlsUrlsAsync();
+        _streamUrls = await _station.ResolveStreamUrlsAsync(_http);
         if (_streamUrls.Count == 0)
-            _streamUrls = new List<string>(FallbackStreamUrls);
+            _streamUrls = new List<string>(_station.FallbackStreamUrls);
 
         _streamUrlIndex = 0;
     }
@@ -122,7 +135,7 @@ public sealed class AudioPlayerService : IDisposable
         {
             // Not initialized yet, or InitializeAsync failed to produce anything
             // usable - fall back rather than doing nothing.
-            _streamUrls = new List<string>(FallbackStreamUrls);
+            _streamUrls = new List<string>(_station.FallbackStreamUrls);
         }
 
         string url = _streamUrls[_streamUrlIndex];
@@ -140,6 +153,10 @@ public sealed class AudioPlayerService : IDisposable
             {
                 AutoPlay = false,
                 Volume = _volume,
+                // Low-latency live buffering. Without it Media Foundation insists on a multi-second buffer and, against Death.FM (a ~4s
+                // burst, then exactly real time), pauses to refill ~3.3s at a time 2-3 times after starting; with it that drops to
+                // about one pause. See DEVELOPING.md ("Death.FM start-up pauses").
+                RealTimePlayback = true,
             };
             // MediaPlayer auto-registers its own System Media Transport
             // Controls session by default (separate from the one SmtcService
@@ -170,6 +187,7 @@ public sealed class AudioPlayerService : IDisposable
         Logger.Log($"AudioPlayerService.Stop() - userWantsPlaying was {_userWantsPlaying}");
         _userWantsPlaying = false;
         DisposeCurrentPlayer();
+        MarkState(PlaybackState.Stopped);
         PlaybackStateChanged?.Invoke(PlaybackState.Stopped);
     }
 
@@ -211,6 +229,8 @@ public sealed class AudioPlayerService : IDisposable
 
         Logger.Log($"MediaPlayer.PlaybackStateChanged - native={nativeState}, mapped={mapped}, userWantsPlaying={_userWantsPlaying}");
 
+        MarkState(mapped);
+
         PlaybackStateChanged?.Invoke(mapped);
     }
 
@@ -239,7 +259,7 @@ public sealed class AudioPlayerService : IDisposable
         {
             // Exhausted the current list - re-fetch the .pls in case the ice
             // server rotation changed, then start over from the top.
-            List<string> refreshed = await FetchPlsUrlsAsync();
+            List<string> refreshed = await _station.ResolveStreamUrlsAsync(_http);
             if (refreshed.Count > 0)
                 _streamUrls = refreshed;
             _streamUrlIndex = 0;
@@ -257,41 +277,91 @@ public sealed class AudioPlayerService : IDisposable
         Play();
     }
 
-    private async Task<List<string>> FetchPlsUrlsAsync()
+    private void MarkState(PlaybackState state)
     {
-        var urls = new List<string>();
+        _lastState = state;
+        Interlocked.Exchange(ref _lastStateChangeTicks, Stopwatch.GetTimestamp());
+    }
+
+    // Stuck "buffering" for too long while the user wants to be playing: the connection is dead. Move on to the
+    // next stream URL (re-fetching the list if needed), the same recovery a MediaFailed gets.
+    private void CheckForStall()
+    {
+        if (_disposed || !_userWantsPlaying || _lastState != PlaybackState.Buffering)
+            return;
+
+        TimeSpan stuckFor = Stopwatch.GetElapsedTime(Interlocked.Read(ref _lastStateChangeTicks));
+        if (stuckFor < StallTimeout)
+            return;
+
+        Logger.Log($"AudioPlayerService - stalled buffering for {stuckFor.TotalSeconds:0}s, reconnecting");
+        MarkState(PlaybackState.Buffering); // restart the clock so one stall triggers one recovery
+        _ = AdvanceAndRetryAsync();
+    }
+
+    // After sleep the old connection is dead but the player may still think it's playing. Give the network a
+    // few seconds to come back, then start a fresh session (the retry logic copes if it's still not up).
+    private void OnPowerModeChanged(object? sender, PowerModeChangedEventArgs e)
+    {
+        if (e.Mode != PowerModes.Resume)
+            return;
+
+        Logger.Log($"AudioPlayerService - resumed from sleep, userWantsPlaying={_userWantsPlaying}");
+        _ = RecoverAsync(TimeSpan.FromSeconds(5), onlyIfNotPlaying: false);
+    }
+
+    private void OnNetworkAvailabilityChanged(object? sender, NetworkAvailabilityEventArgs e)
+    {
+        if (!e.IsAvailable)
+            return;
+
+        Logger.Log($"AudioPlayerService - network available again, userWantsPlaying={_userWantsPlaying}");
+        _ = RecoverAsync(TimeSpan.FromSeconds(3), onlyIfNotPlaying: true);
+    }
+
+    private async Task RecoverAsync(TimeSpan delay, bool onlyIfNotPlaying)
+    {
+        if (_disposed || !_userWantsPlaying)
+            return;
+
+        // Network/power events often arrive in bursts - only one recovery at a time.
+        if (Interlocked.Exchange(ref _recovering, 1) == 1)
+            return;
+
         try
         {
-            string text = await _http.GetStringAsync(PlsUrl);
-            foreach (string rawLine in text.Split('\n'))
-            {
-                string line = rawLine.Trim().TrimEnd('\r');
+            await Task.Delay(delay);
+            if (_disposed || !_userWantsPlaying)
+                return;
 
-                // .pls entries look like "File1=http://...", "File2=http://...".
-                // Order matters (File1 is the playlist's preferred/primary entry).
-                if (line.StartsWith("File", StringComparison.OrdinalIgnoreCase))
-                {
-                    int eq = line.IndexOf('=');
-                    if (eq > 0 && eq < line.Length - 1)
-                    {
-                        string url = line[(eq + 1)..].Trim();
-                        if (Uri.TryCreate(url, UriKind.Absolute, out _))
-                            urls.Add(url);
-                    }
-                }
-            }
+            if (onlyIfNotPlaying && _lastState == PlaybackState.Playing)
+                return;
+
+            // Streams may have rotated while we were away - resolve afresh, then start a new session.
+            _streamUrls = await _station.ResolveStreamUrlsAsync(_http);
+            if (_streamUrls.Count == 0)
+                _streamUrls = new List<string>(_station.FallbackStreamUrls);
+            _streamUrlIndex = 0;
+
+            if (!_disposed && _userWantsPlaying)
+                Play();
         }
-        catch
+        catch (Exception ex)
         {
-            // Best-effort - caller falls back to FallbackStreamUrls when this comes back empty.
+            Logger.Log($"AudioPlayerService - recovery failed: {ex.Message}");
         }
-
-        return urls;
+        finally
+        {
+            Interlocked.Exchange(ref _recovering, 0);
+        }
     }
 
     public void Dispose()
     {
         _disposed = true;
+        SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+        NetworkChange.NetworkAvailabilityChanged -= OnNetworkAvailabilityChanged;
+        _watchdog.Dispose();
         DisposeCurrentPlayer();
         _http.Dispose();
     }

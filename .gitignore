@@ -39,3 +39,6 @@ Thumbs.db
 # reason; never commit it. The real runtime copy lives outside the repo
 # entirely, under %AppData%\SomaMetalTray\settings.json.
 settings.json
+
+# Private-build credentials (SpaceStation like-sync token) - never commit
+local.properties

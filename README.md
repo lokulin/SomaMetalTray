@@ -1,77 +1,84 @@
-# Metal Detector
+# Blastbeat Player
 
-A Windows system tray player for [SomaFM](https://somafm.com)'s **Metal Detector** internet radio channel.
+A Windows system tray player for **[Death.FM](https://death.fm)** and
+**[SomaFM](https://somafm.com)'s Metal Detector** - native playback (no browser
+engine), Chromecast, likes, play history and Last.fm, in a custom-painted
+borderless window.
 
-## About
+Blastbeat Player replaces two earlier apps: *DeathFmTray* (a WebView2 wrapper
+around the Death.FM web player) and *Metal Detector* (this repo's previous
+name, SomaFM only). It carries their settings over on first run.
 
-Unlike its sibling project [DeathFmTray](../DeathFmTray) (a WinForms shell
-wrapping a web player in WebView2), Metal Detector plays the stream directly -
-no browser engine involved - through a fully custom-painted, borderless
-WinForms UI: album art with a reflection on the left over a dark-to-red
-gradient background, track info on the right, a circular play/stop control,
-and a pill-shaped volume slider underneath.
+## Features
 
-It wires up the same companion integrations DeathFmTray has: System Media
-Transport Controls, Last.fm scrobbling, Discord Rich Presence, toast
-notifications on track change, start-at-startup, and minimize-to-tray.
-
-- Plays SomaFM's Metal Detector stream, with automatic failover across the
-  channel's rotating streaming servers.
-- Shows now-playing metadata polled from the channel's song history.
-- Looks up real album art through a source chain (fanart.tv, Deezer,
-  Bandcamp, iTunes), since the channel's own metadata never actually includes
-  art. Falls back to the station's own logo when no source has art for a
-  track.
-- Drives Windows' System Media Transport Controls (volume flyout widget),
-  scrobbles to Last.fm, shows a Discord Rich Presence status with real
-  per-track art, and pops a toast notification (with art) on track change -
-  all optional/best-effort.
-- A progress bar backed by a real track duration when one's available (from
-  the same art lookup), falling back to a purely cosmetic, ever-creeping
-  curve when no source reports a duration, since SomaFM's own feed never
-  provides one for a live radio stream.
-- Click the title, artist, or album text to copy the current track info
-  ("Title — Artist — Album") to the clipboard.
+- **Two stations**, switched from the drop-down in the bottom-right corner (or
+  the tray menu): Death.FM and SomaFM Metal Detector. Streams play directly through
+  Windows' media stack, with automatic failover across SomaFM's rotating
+  servers and **self-healing playback** - it reconnects after a network drop,
+  a stall, or waking from sleep.
+- **Chromecast**: the cast icon in the bottom-right corner (or tray menu) sends the
+  current station to a Cast device using the
+  [DeathFmCastReceiver](../DeathFmCastReceiver). The receiver keeps playing and
+  scrobbling on its own, and switching station while casting switches the
+  receiver too.
+- **Likes**: the heart next to the LIVE pill likes/unlikes the current track.
+  Likes are kept locally, loved on your Last.fm account when it's connected,
+  and - in a private build only, see [DEVELOPING.md](DEVELOPING.md) - synced
+  to your SpaceStation wishlist.
+- **History and upcoming**: the clock icon (or tray menu) opens a list under the
+  player - or over it, when the window is too low on the screen - with a
+  *History* tab (the last 500 tracks you heard, locally or on a Chromecast, each
+  with a heart) and, for Death.FM, an *Upcoming* tab showing its real queue.
+- **Three layouts**: full player, compact, and a one-line mini strip. Double-click
+  the title bar to cycle through them, or use the *View* menu.
+- Now-playing metadata, album art with a reflection, a progress bar, Windows
+  media-flyout / media-key control (SMTC), Last.fm scrobbling, Discord Rich
+  Presence, toast notifications on track change, start with Windows and
+  minimize-to-tray.
+- A tray notice when a **newer release** is available (it only tells you - it
+  never downloads anything; switch it off with *Check for Updates*).
+- Click the title, artist or album text to copy the track info to the clipboard.
 
 ## Installation
 
-1. Download the latest `SomaMetalTray-*-win-x64.zip` from the
+1. Download the latest `BlastbeatPlayer-*-win-x64.zip` from the
    [Releases](../../releases) page.
-2. Extract it anywhere and run `SomaMetalTray.exe`.
+2. Extract it anywhere and run `BlastbeatPlayer.exe`.
 3. Windows SmartScreen may warn that the app is unrecognized, since it isn't
-   code-signed - click **More info -> Run anyway** to launch it.
+   code-signed - click **More info -> Run anyway**.
 
-Last.fm scrobbling, Discord Rich Presence, and album art lookup all use this
-app's own built-in credentials, so there's nothing to register or configure
-to use them out of the box. Scrobbling still needs you to link your own
-Last.fm account once, via the Settings dialog's **Connect** button (tray icon
--> Settings..., or right-click the title bar -> Settings...), which runs
-Last.fm's normal browser-based authorization flow.
+Last.fm scrobbling, Discord Rich Presence and album art lookup use this app's
+own built-in credentials, so there's nothing to register. Scrobbling and the
+Last.fm "love" on like need you to link your own account once via **Settings...**
+(tray menu, or right-click the title bar).
+
+Coming from DeathFmTray or the old Metal Detector? Run Blastbeat Player once and
+your Last.fm login, volume, window position and station are imported; you can
+then delete the old app. If DeathFmTray was set to start with Windows, turn that
+off in its tray menu.
 
 ## Developing
 
-Requires the .NET 10 SDK with the Windows Forms/WinRT workload; `dotnet build`
-/ `dotnet run` gets you a running copy. See [DEVELOPING.md](DEVELOPING.md) for
-the full architecture breakdown, file-by-file notes, and release process.
+Requires the .NET 10 SDK; `dotnet build` / `dotnet run` gets you a running
+copy and `dotnet test tests/SomaMetalTray.Tests` runs the unit tests. See
+[DEVELOPING.md](DEVELOPING.md) for architecture, the private-build setup and the
+release process.
 
-## Known bugs
+## Known issues
 
-- Bandcamp's response shape is still unverified against live traffic - the
-  endpoint has IP-blocked every test attempt so far, so it fails soft into
-  iTunes if the guessed shape turns out to be wrong.
-- The Settings dialog is still a plain port of DeathFmTray's layout with a
-  couple of fields bolted on, rather than a clean grouping/spacing pass
-  tailored to this app.
-- The disk art cache has no eviction, so it grows unbounded over time (though
-  slowly - one small JPEG + sidecar files per unique track ever seen).
+- Cast is ported from DeathFmTray, and SomaFM casting depends on the receiver's
+  `somafm-metal` station, which has had little real-device testing.
+- Bandcamp's art-lookup response shape is unverified against live traffic; it
+  fails soft into iTunes.
+- The disk art cache has no eviction.
+- Not code-signed (SmartScreen warns on first run).
 
-## Planned features
+## Ideas
 
-- Verify and, if needed, fix the Bandcamp art lookup against a real response.
-- Add cache eviction for the disk art cache.
-- Automated tests for `SomaFmService`/`ArtworkService`/`AudioPlayerService`
-  against recorded fixture responses.
-- Possible migration from WinForms to Avalonia for the custom-painted UI.
+- Global hotkeys (play/stop, like) - media keys already work via SMTC.
+- Verify the Bandcamp art lookup; add art-cache eviction.
+- Other Death.FM network stations and other SomaFM channels (the station layer
+  is built to take more).
 
 ## License
 

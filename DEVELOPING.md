@@ -1,4 +1,4 @@
-# Developing Metal Detector
+# Developing Blastbeat Player
 
 This covers architecture, file-by-file notes, and the release process for
 contributors. For what the app does and how to install it, see
@@ -8,39 +8,53 @@ contributors. For what the app does and how to install it, see
 
 | File | Purpose |
 |---|---|
-| `Program.cs` | Entry point. |
-| `PlayerForm.cs` | The main window - custom-painted UI, title bar, playback controls, artwork panel, progress bar. |
-| `PlaybackControls.cs` | The circular play/stop control and pill-shaped volume slider. |
-| `WindowChromeHelper.cs` | Hand-implemented window dragging and system menu for the borderless window. |
-| `SystemMenuHelper.cs` | Appends custom items to the window's native system menu. |
-| `SettingsForm.cs` | Settings dialog - Last.fm Connect/Disconnect and other toggles. |
-| `SettingsStore.cs` | Loads/saves user preferences as JSON in `%AppData%\SomaMetalTray\settings.json`. |
-| `AudioPlayerService.cs` | Wraps `Windows.Media.Playback.MediaPlayer`, handling stream playback and failover across rotating servers. |
-| `SomaFmService.cs` | Polls SomaFM's song-history and channel-branding endpoints for now-playing metadata. |
-| `ArtworkService.cs` | Album art lookup source chain (fanart.tv, Deezer, Bandcamp, iTunes) plus disk/memory caching. |
+| `Program.cs` | Entry point: AUMID, Start Menu shortcut, legacy migration, single-instance mutex. |
+| `AppInfo.cs` | App name, data folders, AUMID, mutex name, GitHub repo - the one place the app's identity lives. |
+| `Stations.cs` | `IStation` / `INowPlayingSource` and the two stations (Death.FM, Metal Detector), incl. the Death.FM now-playing poller. |
+| `PlayerForm.cs` | The main window - custom-painted UI, title bar, controls, artwork, progress, view modes, likes, history, cast wiring. |
+| `ViewMode.cs` | The three window layouts and all their pixel metrics. |
+| `PlaybackControls.cs` | `UiColors`, play/stop circle, volume slider and the title-bar minimise/close buttons. |
+| `AudioPlayerService.cs` | Wraps `Windows.Media.Playback.MediaPlayer`; stream failover and self-healing (stall watchdog, resume from sleep, network back). |
+| `SomaFmService.cs` | Polls SomaFM's song-history and channel-branding endpoints. |
+| `ArtworkService.cs` | Art lookup: the station's own cover art first, then fanart.tv / Deezer / Bandcamp / iTunes; disk/memory cache. |
+| `CastService.cs`, `CastMenuHelper.cs` | Chromecast via Sharpcaster (device discovery, LOAD with `customData.stationId`, Last.fm credential handoff). |
+| `Wishlist.cs` | Likes: `WishlistEntry` (name folding), `WishlistRepository` (local-first + retry queue), `SpaceStationWishlistApi`. |
+| `PlayHistory.cs` | The last 500 tracks heard (persisted). |
+| `TrackPanel.cs` | The History / Upcoming list under or over the player: owner-drawn rows, thumbnails (`ThumbnailCache`), wheel scroll, row menu. |
+| `Upcoming.cs` | Death.FM's queue (`get_db_info` HTML fragments) parser and fetch. |
+| `Ui.cs` | Look-and-feel borrowed from the SpaceStation tray player: Segoe Fluent glyphs, `IconButton`, `DropdownButton`, `ThemedMenu`. |
+| `UpdateChecker.cs` | Daily GitHub "latest release" check; notify-only. |
+| `LegacyMigration.cs` | One-time import from SomaMetalTray / DeathFmTray settings and the old autostart entry. |
 | `SmtcService.cs` | Drives Windows' System Media Transport Controls. |
-| `LastFmScrobbler.cs` | Scrobbles now-playing tracks to Last.fm. |
-| `DiscordPresenceService.cs` | Shows the current track as a Discord Rich Presence status. |
-| `TrackChangeNotifier.cs` | Pops a toast notification (with art) on track change; clears this app's own stale notifications on launch. |
-| `TrayAppContext.cs` | Owns the `NotifyIcon`, tray context menu, and overall app lifetime. |
-| `StartupManager.cs` | Adds/removes a "run at Windows startup" entry via the per-user registry Run key. |
-| `AumidShortcutHelper.cs` | Creates a Start Menu shortcut stamped with the process AUMID so the media flyout shows "Metal Detector" instead of "Unknown app". |
-| `AppCredentials.cs` | This app's own compiled-in Last.fm/Discord/fanart.tv application identifiers (see "API keys / secrets" below). |
-| `Logger.cs` | Writes a rolling debug log to `%LOCALAPPDATA%\SomaMetalTray\debug.log`. |
+| `LastFmScrobbler.cs` | Now-playing, scrobbles, and love/unlove. |
+| `DiscordPresenceService.cs` | Discord Rich Presence. |
+| `TrackChangeNotifier.cs` | Toast on track change. |
+| `TrayAppContext.cs` | `NotifyIcon`, tray menu, update notice, app lifetime. |
+| `SettingsForm.cs`, `SettingsStore.cs` | Settings dialog; JSON settings in `%AppData%\BlastbeatPlayer\settings.json`. |
+| `StartupManager.cs`, `AumidShortcutHelper.cs` | Run-key autostart; Start Menu shortcut carrying the AUMID. |
+| `WindowChromeHelper.cs`, `SystemMenuHelper.cs` | Borderless-window dragging and system menu. |
+| `AppCredentials.cs` | Compiled-in Last.fm / Discord / fanart.tv application identifiers. |
+| `Logger.cs` | Rolling debug log at `%LOCALAPPDATA%\BlastbeatPlayer\debug.log`. |
+| `tools/GeneratePrivateConfig.cs` | MSBuild inline task behind the private-build credentials (not part of the app). |
+| `tests/SomaMetalTray.Tests/` | xUnit tests (wishlist, history, update tags, migration). |
 
 ## Prerequisites
 
 Requires the .NET 10 SDK with the Windows Forms/WinRT workload (matching
-DeathFmTray's `net10.0-windows10.0.19041.0` target).
+`net10.0-windows10.0.19041.0` target).
 
 ## Building and running
 
 ```powershell
 dotnet build
 dotnet run
+dotnet test tests/SomaMetalTray.Tests
 ```
 
-A debug log is written to `%LOCALAPPDATA%\SomaMetalTray\debug.log` (rolling,
+(The project file and namespace are still `SomaMetalTray` - the repo keeps its name; the exe, settings
+folder, AUMID and everything user-visible are `BlastbeatPlayer`.)
+
+A debug log is written to `%LOCALAPPDATA%\BlastbeatPlayer\debug.log` (rolling,
 truncated on each launch) covering playback state transitions, SMTC button
 presses, and resolved artwork paths - useful for diagnosing anything that
 looks wrong without attaching a debugger.
@@ -65,7 +79,7 @@ Pushing an annotated tag matching `v*.*.*` triggers
    ```
 
 2. Strips `.pdb`/`.xml` files from the publish output.
-3. Zips the output as `SomaMetalTray-<version>-win-x64.zip`.
+3. Zips the output as `BlastbeatPlayer-<version>-win-x64.zip`.
 4. Creates a GitHub Release from the tag and attaches the zip, with
    auto-generated release notes.
 5. Pings the Death.FM Players site's Cloudflare Deploy Hook so its release
@@ -207,8 +221,103 @@ scrobbling still requires you to link your own account once via the
 Settings dialog's Connect button (tray icon -> Settings..., or right-click
 the title bar -> Settings...), which runs Last.fm's normal browser-based
 authorization flow and stores the resulting per-user session key in
-`%AppData%\SomaMetalTray\settings.json` - **never commit that file** (the
+`%AppData%\BlastbeatPlayer\settings.json` - **never commit that file** (the
 repo's `.gitignore` also excludes a stray `settings.json` dropped in the
 project directory during local testing, as a second line of defense).
 Discord Rich Presence and album art lookup work automatically with no setup
 at all; Discord presence can be turned off if you don't want it.
+
+## Stations
+
+A station (`IStation`) knows how to resolve its stream URLs, how to create its now-playing source, its logo, and the id
+the Cast receiver knows it by (`CastStationId`). Adding one is: implement `IStation` (+ an `INowPlayingSource` if the
+feed is new), add it to `Stations.All`. `PlayerForm.SwitchStation` handles the rest (stops playback, swaps the
+sources, resumes, re-LOADs a connected Chromecast).
+
+**Death.FM** streams `https://death.fm/live` (AAC) and polls its undocumented now-playing JSON directly - no web page.
+Quirks handled in `DeathFmNowPlayingSource`: HTML-entity-encoded fields; `PlayStart`/`SystemTime` are on a station
+clock that is ~4h off real UTC, so only their *difference* is trusted and elapsed time is anchored to the local clock;
+`CoverLink` is the real art; poll no faster than ~30s (the next poll is aimed just after the track should end).
+
+### Death.FM start-up pauses
+
+Played through Windows' `MediaPlayer` (Media Foundation), Death.FM stutters at the start: `death.fm/live` sends ~4s of audio in a
+burst and then exactly real time (192kbps = 24KB/s), and Media Foundation wants more than that buffered, so it plays, pauses for
+~3.3s (the `Buffering` state), plays again, and repeats 2-3 times in the first ~10s before it settles. The pause length is the
+engine's own buffering target - it stayed ~3.3s even when a local relay delivered 7.5s of audio instantly - and a paused player
+doesn't read ahead, so a pre-roll before `Play()` doesn't help either. Metal Detector (Icecast) doesn't do it, and neither do
+Chromium (the web player, the Cast receiver) or Android's ExoPlayer, which have lower, configurable start thresholds.
+
+What helps, measured on the installed app (a handful of runs each, so treat as indicative):
+
+| | pauses in the first ~10s |
+|---|---|
+| direct, default | 2-3 |
+| direct, `RealTimePlayback = true` (**always on**) | 1 |
+| via the receiver proxy while *warm*, with it | 0 (starts in ~0.15s) |
+| via the receiver proxy while *cold*, with it | 1 |
+
+The proxy is the Cast receiver's `https://deathfm-cast.l6n.uk/proxy/deathfm-live` (a Durable Object serving the same audio as a ~1GB
+"seekable" file; `DeathFmCastReceiver/src/deathfm-live-buffer.js`). It is the owner's own Worker, so it is a **private-build** setting:
+`DEATHFM_STREAM_PROXY_URL` in `local.properties`; public builds play directly. It only gives the clean start while its upstream
+connection is open - it closes it 90s after the last listener - so `PlayerForm.WarmUpStream` pokes it (a few KB, throttled to once
+a minute) when the window is activated, at startup and on switching to Death.FM. `https://death.fm/live` is the fallback URL
+(`AudioPlayerService` rotates to it on a failure or a 25s buffering stall). Casting is unaffected: the receiver uses the proxy itself.
+
+A real fix would be a player with a configurable start threshold (e.g. LibVLC's `--network-caching`) instead of Media Foundation.
+
+**Metal Detector** is SomaFM's `metal` channel (`api.somafm.com/metal130.pls`, `somafm.com/songs/metal.json`).
+
+## Chromecast
+
+`CastService` (Sharpcaster, CASTv2) discovers devices over mDNS on demand, launches/joins receiver app `0CD00C8F`
+([DeathFmCastReceiver](../DeathFmCastReceiver)) and LOADs the station's stream with
+`customData: { stationId }` - the receiver picks its own now-playing feed and branding from that. It then hands the
+receiver the Last.fm credentials over `urn:x-cast:com.terraeclectic.deathfm.lastfm` so scrobbling continues without this
+PC. Starting a cast stops local playback; stopping only disconnects the sender (the receiver keeps playing).
+SomaFM casting relies on the receiver's `somafm-metal` entry and is lightly tested on real devices.
+
+## Likes and the private build
+
+Pressing the heart toggles the track in `WishlistRepository` (local `wishlist.json`, keyed by a name folding identical
+to the SpaceStation Worker's `normalizeWishlistKey` - note it uses the Win32 `NormalizeString`, because
+`string.Normalize` does nothing under `InvariantGlobalization`), loves/unloves it on Last.fm if connected, and - only
+when built with credentials - queues a `POST`/`DELETE /wishlist` to the SpaceStation Worker, with a persisted
+retry queue (latest intent per track wins; oldest-first; stops at the first failure; 401/403/408/429/5xx retried, other
+4xx dropped). It is a port of DeathFmAndroid's `WishlistRepository`.
+
+The Worker is behind a Cloudflare Access service token, so, as on Android, the sync is a **private build** feature:
+copy `local.properties.example` to `local.properties` (gitignored) and fill in the three `SPACESTATION_*` values;
+`tools/GeneratePrivateConfig.cs` turns them into `PrivateConfig` constants at build time. Public/CI builds have no file,
+so the constants are empty and nothing is queued or sent. **Never share an exe built with these set - the token is
+inside it.**
+
+## History, layouts, self-healing, updates
+
+- **History and upcoming panel** (`TrackPanel`): `PlayHistory` is newest first, capped at 500, `history.json`; a track is
+  recorded when it changes while something is playing it - locally or on a Chromecast - and on starting playback; repeats of
+  the newest entry are skipped. The panel (340px) opens under the player, or over it when `PlayerForm.PlanPanel` finds no
+  room below: the window then grows upward so the player does not move (`ViewMetrics.For(..., extraTop)` pushes the player
+  down). Strip mode has no room for it. The Upcoming tab appears for stations with `HasUpcoming` (Death.FM: `DeathFmQueue`
+  fetches `player.php?ajax_action=get_db_info&station=dfm&asin=<now playing>` and parses the `queue_html` rows; the ASIN comes
+  from the now-playing `SiteLink`). Death.FM answers 403 to Python's default User-Agent - the app sends its own product token.
+- **Controls** use SpaceStation's look (`Ui.cs`): the heart and cast are `IconButton`s with Segoe Fluent glyphs, the station
+  drop-down is a `DropdownButton` that pops a `ThemedMenu`. Menus are shown with `ThemedMenu.ShowAndDispose`, which defers the
+  dispose - disposing from `Closed` crashes WinForms (regression test: `ThemedMenuTests`). Labels set `UseMnemonic = false` so
+  an `&` in a track name shows.
+- **Double-click** on the title bar cycles the layouts. It is detected by hand in `OnMouseDown` (the first click starts the
+  window drag, whose modal loop swallows the usual `DoubleClick`).
+- **Layouts** (`ViewMode`): Full / Compact / Strip. All pixel positions come from `ViewMetrics.For(mode)`;
+  `PlayerForm.ApplyLayout` applies them. The window stays fixed-size per mode (min = max). The mode is saved.
+- **Self-healing** (`AudioPlayerService`): a 5s watchdog restarts a stream stuck buffering > 25s; `SystemEvents.PowerModeChanged`
+  (resume) and `NetworkChange.NetworkAvailabilityChanged` trigger a fresh session (URLs re-resolved) after a short delay.
+- **Updates** (`UpdateChecker`): one anonymous `GET /repos/<AppInfo.GitHubRepo>/releases/latest` 45s after start and then
+  daily; a newer tag adds a tray menu entry and one balloon per version. Nothing is downloaded or installed.
+
+## Identity and migration
+
+The user-visible identity lives in `AppInfo` (name, data folders, AUMID, mutex). The system-menu command ids are masked
+by Windows to a multiple of 0x10, so groups of commands (stations, views) step by 0x10. On startup `LegacyMigration`
+copies `%AppData%\SomaMetalTray\*.json` to `%AppData%\BlastbeatPlayer` (or imports Last.fm login/volume/window/station
+from `%AppData%\DeathFmTray\settings.json` if there is no Soma data), moves the `SomaMetalTray` Run-key entry to the
+new name, and `AumidShortcutHelper` replaces the old Start Menu shortcut. Old folders are never deleted.

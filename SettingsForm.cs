@@ -6,16 +6,13 @@ namespace SomaMetalTray;
 
 /// <summary>
 /// Editor for the settings that would otherwise require hand-editing
-/// %AppData%\SomaMetalTray\settings.json. Last.fm's API key/secret and the
+/// %AppData%\BlastbeatPlayer\settings.json. Last.fm's API key/secret and the
 /// Discord Client ID/default image key/fanart.tv API key are this app's own
 /// compiled-in identifiers (see AppCredentials) rather than something each
 /// user has to register/paste in, so the only thing left here is connecting
 /// your own Last.fm account. Everything else (start with Windows, minimize
 /// to tray, etc.) already has its own tray/system menu checkbox and doesn't
 /// need a dialog.
-///
-/// SomaMetalTray only ever plays one channel (SomaFM's Metal Detector), so
-/// unlike DeathFmTray's settings this has no station-switching UI.
 /// </summary>
 public sealed class SettingsForm : Form
 {
@@ -30,7 +27,7 @@ public sealed class SettingsForm : Form
         _settings = settings;
         _playerForm = playerForm;
 
-        Text = "Metal Detector Settings";
+        Text = $"{AppInfo.Name} Settings";
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;

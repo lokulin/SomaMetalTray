@@ -20,11 +20,8 @@ namespace SomaMetalTray;
 /// </summary>
 public sealed class TrackChangeNotifier
 {
-    // Must stay in sync with Program.AppUserModelId - same convention
-    // AumidShortcutHelper already follows. Toasts from an unpackaged app are
-    // silently dropped without a valid AUMID (already set up for SMTC/the
-    // Start Menu shortcut, so nothing extra is needed beyond reusing it here).
-    private const string AppUserModelId = "TerraEclectic.SomaMetalTray.v1";
+    // Toasts from an unpackaged app are silently dropped without a valid AUMID (the same one SMTC and the Start Menu shortcut use).
+    private const string AppUserModelId = AppInfo.AppUserModelId;
 
     private readonly AppSettings _settings;
     private bool _isPlaying;
@@ -99,7 +96,7 @@ public sealed class TrackChangeNotifier
             {
                 MessageBox.Show(
                     $"Couldn't show a test notification:\n\n{ex.Message}",
-                    "Metal Detector",
+                    AppInfo.Name,
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);
             }

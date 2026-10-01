@@ -22,6 +22,9 @@ public sealed class DiscordPresenceService : IDisposable
         _settings = settings;
     }
 
+    /// <summary>Shown as the hover text on the large image; the player keeps this in step with the selected station.</summary>
+    public string StationName { get; set; } = AppInfo.Name;
+
     public bool IsConfigured => _settings.DiscordPresenceEnabled;
 
     /// <summary>Opens the connection to Discord's local RPC pipe. Safe to call even if Discord isn't running yet.</summary>
@@ -73,7 +76,7 @@ public sealed class DiscordPresenceService : IDisposable
             presence.Assets = new Assets
             {
                 LargeImageKey = imageKey,
-                LargeImageText = "Metal Detector",
+                LargeImageText = StationName,
             };
         }
 

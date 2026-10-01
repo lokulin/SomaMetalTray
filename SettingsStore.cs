@@ -14,8 +14,18 @@ public sealed class AppSettings
     public int? WindowX { get; set; }
     public int? WindowY { get; set; }
 
-    // SomaMetalTray only ever plays one channel (SomaFM's "Metal Detector"),
-    // so unlike DeathFmTray there's no station-switching setting here.
+    // Id of the last-selected station (see Stations). Null means "never
+    // chose one" - Stations.ById then returns the default.
+    public string? StationId { get; set; }
+
+    // Notify (tray menu + one balloon) when a newer GitHub release exists. Nothing is ever downloaded or installed.
+    public bool CheckForUpdates { get; set; } = true;
+
+    // Newest version we've already shown a balloon for, so it isn't repeated every launch.
+    public string? LastNotifiedVersion { get; set; }
+
+    // Last-used window layout (see ViewMode). Null means the full player.
+    public ViewMode ViewMode { get; set; } = ViewMode.Full;
 
     // Null means "never changed it, use the default" rather than baking a
     // value in twice. Owned by AudioPlayerService (there's no webview <audio>
@@ -37,12 +47,10 @@ public sealed class AppSettings
     public bool DiscordPresenceEnabled { get; set; } = true;
 }
 
-/// <summary>Reads/writes AppSettings as JSON under %AppData%\SomaMetalTray\settings.json.</summary>
+/// <summary>Reads/writes AppSettings as JSON under %AppData%\BlastbeatPlayer\settings.json.</summary>
 public static class SettingsStore
 {
-    private static readonly string SettingsDirectory = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "SomaMetalTray");
+    private static readonly string SettingsDirectory = AppInfo.RoamingDir;
 
     private static readonly string SettingsPath = Path.Combine(SettingsDirectory, "settings.json");
 

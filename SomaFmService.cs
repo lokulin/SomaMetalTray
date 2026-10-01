@@ -16,7 +16,9 @@ namespace SomaMetalTray;
 /// PlayerForm.ComputeFakeProgress); there's no real track-duration API to be
 /// accurate against.
 /// </param>
-public readonly record struct TrackMetadata(string Title, string Artist, string Album, string? ArtUrl, DateTimeOffset? StartedAt = null);
+/// <param name="StationTrackId">The station's own id for the track when it has one (Death.FM: the album ASIN, used to look up its queue).</param>
+/// <param name="Duration">Real track length when the station's own feed reports it (Death.FM does; SomaFM doesn't).</param>
+public readonly record struct TrackMetadata(string Title, string Artist, string Album, string? ArtUrl, DateTimeOffset? StartedAt = null, TimeSpan? Duration = null, string? StationTrackId = null);
 
 /// <summary>
 /// Polls SomaFM's public "now playing" JSON endpoints for the Metal Detector
@@ -26,7 +28,7 @@ public readonly record struct TrackMetadata(string Title, string Artist, string 
 /// websocket/push API for this, so short-interval polling is the documented
 /// approach their own web player uses too.
 /// </summary>
-public sealed class SomaFmService : IDisposable
+public sealed class SomaFmService : INowPlayingSource
 {
     private const string ChannelId = "metal";
     private const string SongsUrl = "https://somafm.com/songs/metal.json";
@@ -60,12 +62,14 @@ public sealed class SomaFmService : IDisposable
         {
             Timeout = TimeSpan.FromSeconds(10),
         };
-        _http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("SomaMetalTray", "0.1"));
+        _http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue(AppInfo.UserAgentProduct, UpdateChecker.CurrentVersion().ToString(3)));
         _http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("(+https://github.com/lokulin/SomaMetalTray)"));
 
         _pollTimer = new Timer { Interval = (int)(pollInterval ?? TimeSpan.FromSeconds(18)).TotalMilliseconds };
         _pollTimer.Tick += async (_, _) => await PollSongsAsync();
     }
+
+    public void Stop() => _pollTimer.Stop();
 
     public void Dispose()
     {

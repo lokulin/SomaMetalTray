@@ -1,0 +1,10 @@
+# Copy to local.properties (gitignored) to build a private version with SpaceStation like-sync.
+# Same keys as DeathFmAndroid's local.properties. Leave the file out for public builds.
+# NEVER share an exe built with these set - the token is compiled into it.
+SPACESTATION_URL=https://spacestation.l6n.uk
+SPACESTATION_CF_ACCESS_CLIENT_ID=
+SPACESTATION_CF_ACCESS_CLIENT_SECRET=
+
+# Optional: play Death.FM through the DeathFmCastReceiver's buffering proxy (starts instantly, no buffering pauses) instead of
+# directly from death.fm. It's your Cloudflare Worker, so only builds that set this use it; public builds play directly.
+DEATHFM_STREAM_PROXY_URL=https://deathfm-cast.l6n.uk/proxy/deathfm-live

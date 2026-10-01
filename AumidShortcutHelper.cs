@@ -13,10 +13,10 @@ namespace SomaMetalTray;
 /// </summary>
 internal static class AumidShortcutHelper
 {
-    // Must stay in sync with Program.AppUserModelId.
-    private const string AppUserModelId = "TerraEclectic.SomaMetalTray.v1";
-    private const string DisplayName = "Metal Detector";
-    private const string ShortcutName = "Metal Detector.lnk";
+    private const string AppUserModelId = AppInfo.AppUserModelId;
+    private const string DisplayName = AppInfo.Name;
+    private const string ShortcutName = AppInfo.Name + ".lnk";
+    private const string LegacyShortcutName = "Metal Detector.lnk"; // what this app was called before the rename
 
     private static readonly Guid PkeyAppUserModel = new("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3");
     private const int PidAppUserModelId = 5;                       // PKEY_AppUserModel_ID
@@ -46,6 +46,11 @@ internal static class AumidShortcutHelper
 
             CreateBasicShortcut(shortcutPath, exePath);
             TryStampShortcutProperties(shortcutPath, AppUserModelId, DisplayName);
+
+            // The old name's shortcut would otherwise sit next to the new one, launching a missing exe.
+            string legacyPath = Path.Combine(programsDir, LegacyShortcutName);
+            if (File.Exists(legacyPath))
+                File.Delete(legacyPath);
         }
         catch
         {

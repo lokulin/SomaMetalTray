@@ -51,13 +51,13 @@ jobs:
         shell: pwsh
         run: |
           $version = if ("${{ github.ref_type }}" -eq "tag") { "${{ github.ref_name }}" } else { "dev" }
-          Compress-Archive -Path publish\* -DestinationPath "SomaMetalTray-$version-win-x64.zip"
+          Compress-Archive -Path publish\* -DestinationPath "BlastbeatPlayer-$version-win-x64.zip"
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: SomaMetalTray-*.zip
+          files: BlastbeatPlayer-*.zip
           generate_release_notes: true
 
       - name: Notify Death.FM Players site to rebuild

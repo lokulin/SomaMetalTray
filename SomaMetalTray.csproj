@@ -10,18 +10,18 @@
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <AssemblyName>SomaMetalTray</AssemblyName>
+    <AssemblyName>BlastbeatPlayer</AssemblyName>
     <RootNamespace>SomaMetalTray</RootNamespace>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <!-- These flow into the exe's version resource (FileDescription/Product) -
          Windows falls back to reading this for the volume mixer / media flyout
          app name when it can't otherwise resolve a friendly name. -->
-    <AssemblyTitle>Metal Detector</AssemblyTitle>
-    <Product>Metal Detector</Product>
-    <Description>A Windows tray player for SomaFM's Metal Detector internet radio channel</Description>
+    <AssemblyTitle>Blastbeat Player</AssemblyTitle>
+    <Product>Blastbeat Player</Product>
+    <Description>A Windows tray player for Death.FM and SomaFM's Metal Detector, with Chromecast, likes, history and Last.fm</Description>
     <Company>Terra Eclectic</Company>
-    <Version>0.3.3</Version>
-    <FileVersion>0.3.3.0</FileVersion>
+    <Version>0.5.0</Version>
+    <FileVersion>0.5.0.0</FileVersion>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <Platforms>x64</Platforms>
     <StartupObject>SomaMetalTray.Program</StartupObject>
@@ -29,7 +29,16 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="tools/**;tests/**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SomaMetalTray.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="DiscordRichPresence" Version="1.6.1.70" />
+    <PackageReference Include="Sharpcaster" Version="3.0.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -41,5 +50,23 @@
       <LogicalName>tray.ico</LogicalName>
     </EmbeddedResource>
   </ItemGroup>
+
+  <!-- Private-build credentials, mirroring DeathFmAndroid's local.properties toggle. A gitignored
+       local.properties next to this file may define SPACESTATION_URL, SPACESTATION_CF_ACCESS_CLIENT_ID and
+       SPACESTATION_CF_ACCESS_CLIENT_SECRET; they are compiled into PrivateConfig. With no file (CI / public
+       release builds) all three are empty and the like-sync feature is simply off. NEVER share a build made
+       with these set - the token is inside the exe. -->
+  <UsingTask TaskName="GeneratePrivateConfig" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <Task>
+      <Code Type="Class" Language="cs" Source="$(MSBuildThisFileDirectory)tools/GeneratePrivateConfig.cs" />
+    </Task>
+  </UsingTask>
+
+  <Target Name="GeneratePrivateConfigFile" BeforeTargets="CoreCompile">
+    <GeneratePrivateConfig PropertiesFile="$(MSBuildProjectDirectory)\local.properties" OutputFile="$(MSBuildProjectDirectory)\$(IntermediateOutputPath)PrivateConfig.g.cs" />
+    <ItemGroup>
+      <Compile Include="$(IntermediateOutputPath)PrivateConfig.g.cs" />
+    </ItemGroup>
+  </Target>
 
 </Project>

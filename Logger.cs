@@ -5,7 +5,7 @@ using System.IO;
 namespace SomaMetalTray;
 
 /// <summary>
-/// Minimal rolling debug log written to %LOCALAPPDATA%\SomaMetalTray\debug.log,
+/// Minimal rolling debug log written to %LOCALAPPDATA%\BlastbeatPlayer\debug.log,
 /// used to diagnose the "SMTC pause kills playback forever" bug report (see
 /// AudioPlayerService/SmtcService/PlayerForm) without needing a full logging
 /// framework. Enabled by default (not behind a flag) - a user can just run the
@@ -20,9 +20,7 @@ internal static class Logger
     // as a "reproduce it once, grab the file" diagnostic aid, not a durable log.
     private const long MaxBytes = 2 * 1024 * 1024; // 2 MB
 
-    private static readonly string LogDirectory = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "SomaMetalTray");
+    private static readonly string LogDirectory = AppInfo.LocalDir;
 
     private static readonly string LogPath = Path.Combine(LogDirectory, "debug.log");
     private static readonly object Lock = new();
