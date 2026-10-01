@@ -64,7 +64,7 @@ public sealed class PlayerForm : Form
     private readonly DiscordPresenceService _discord;
     private readonly CastService _cast;
     private readonly WishlistRepository _wishlist;
-    private readonly SpaceStationWishlistApi? _wishlistApi;
+    private readonly RemoteWishlistApi? _wishlistApi;
     private readonly IconButton _heartButton = new(Glyphs.Heart, 15f);
     private readonly PlayHistory _history;
     private readonly TrackPanel _panel;
@@ -144,9 +144,9 @@ public sealed class PlayerForm : Form
         _discord = new DiscordPresenceService(settings);
         _discord.StationName = _station.DisplayName;
         _discord.Start();
-        // Likes are local-first; they only sync to SpaceStation in private builds that have credentials (see PrivateConfig).
+        // Likes are local-first; they only sync to the wishlist server in private builds that have credentials (see PrivateConfig).
         _wishlistApi = PrivateConfig.WishlistEnabled
-            ? new SpaceStationWishlistApi(PrivateConfig.SpaceStationUrl, PrivateConfig.SpaceStationClientId, PrivateConfig.SpaceStationClientSecret)
+            ? new RemoteWishlistApi(PrivateConfig.WishlistUrl, PrivateConfig.WishlistClientId, PrivateConfig.WishlistClientSecret)
             : null;
         _wishlist = new WishlistRepository(new FileTextStorage(WishlistPath), _wishlistApi);
         _history = new PlayHistory(new FileTextStorage(HistoryPath));
@@ -926,7 +926,7 @@ _stationButton.SetBounds(_castButton.Left - 6 - _m.DropdownWidth, clusterY + 3, 
         LikeStateChanged?.Invoke();
     }
 
-    /// <summary>Likes or unlikes the current track: local list, SpaceStation queue (private builds) and Last.fm love.</summary>
+    /// <summary>Likes or unlikes the current track: local list, wishlist-server queue (private builds) and Last.fm love.</summary>
     public async Task ToggleLikeAsync()
     {
         if (_lastMetadata is not TrackMetadata track || IsDisposed)

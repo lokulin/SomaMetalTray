@@ -24,7 +24,7 @@ name, SomaFM only). It carries their settings over on first run.
 - **Likes**: the heart next to the LIVE pill likes/unlikes the current track.
   Likes are kept locally, loved on your Last.fm account when it's connected,
   and - in a private build only, see [DEVELOPING.md](DEVELOPING.md) - synced
-  to your SpaceStation wishlist.
+  to your private wishlist server.
 - **History and upcoming**: the clock icon (or tray menu) opens a list under the
   player - or over it, when the window is too low on the screen - with a
   *History* tab (the last 500 tracks you heard, locally or on a Chromecast, each

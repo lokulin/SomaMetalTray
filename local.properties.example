@@ -1,9 +1,9 @@
-# Copy to local.properties (gitignored) to build a private version with SpaceStation like-sync.
+# Copy to local.properties (gitignored) to build a private version with wishlist-server like sync.
 # Same keys as DeathFmAndroid's local.properties. Leave the file out for public builds.
 # NEVER share an exe built with these set - the token is compiled into it.
-SPACESTATION_URL=https://spacestation.l6n.uk
-SPACESTATION_CF_ACCESS_CLIENT_ID=
-SPACESTATION_CF_ACCESS_CLIENT_SECRET=
+WISHLIST_URL=https://your-wishlist-server.example
+WISHLIST_CF_ACCESS_CLIENT_ID=
+WISHLIST_CF_ACCESS_CLIENT_SECRET=
 
 # Optional, OFF by default: play Death.FM through the DeathFmCastReceiver's buffering proxy instead of directly from death.fm. It
 # only helps while its connection is warm (about one fewer start-up pause). It's your Cloudflare Worker, so only builds that set this use it; public builds play directly.

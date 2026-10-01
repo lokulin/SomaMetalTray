@@ -52,8 +52,8 @@
   </ItemGroup>
 
   <!-- Private-build credentials, mirroring DeathFmAndroid's local.properties toggle. A gitignored
-       local.properties next to this file may define SPACESTATION_URL, SPACESTATION_CF_ACCESS_CLIENT_ID and
-       SPACESTATION_CF_ACCESS_CLIENT_SECRET; they are compiled into PrivateConfig. With no file (CI / public
+       local.properties next to this file may define WISHLIST_URL, WISHLIST_CF_ACCESS_CLIENT_ID and
+       WISHLIST_CF_ACCESS_CLIENT_SECRET; they are compiled into PrivateConfig. With no file (CI / public
        release builds) all three are empty and the like-sync feature is simply off. NEVER share a build made
        with these set - the token is inside the exe. -->
   <UsingTask TaskName="GeneratePrivateConfig" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">

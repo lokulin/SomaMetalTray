@@ -18,7 +18,7 @@ internal static class UiColors
     public static readonly Color AccentHover = Color.FromArgb(0xe0, 0x45, 0x45);
     public static readonly Color AccentPressed = Color.FromArgb(0x90, 0x20, 0x20);
 
-    // Popup menus, pills and list panels (the same roles as SpaceStation's palette, tinted to this app's red).
+    // Popup menus, pills and list panels (surface, border and text roles, tinted to this app's red).
     public static readonly Color Surface = Color.FromArgb(0x1c, 0x12, 0x12);
     public static readonly Color SurfaceHover = Color.FromArgb(0x2c, 0x18, 0x18);
     public static readonly Color Border = Color.FromArgb(0x4a, 0x24, 0x24);

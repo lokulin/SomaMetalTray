@@ -18,11 +18,11 @@ contributors. For what the app does and how to install it, see
 | `SomaFmService.cs` | Polls SomaFM's song-history and channel-branding endpoints. |
 | `ArtworkService.cs` | Art lookup: the station's own cover art first, then fanart.tv / Deezer / Bandcamp / iTunes; disk/memory cache. |
 | `CastService.cs`, `CastMenuHelper.cs` | Chromecast via Sharpcaster (device discovery, LOAD with `customData.stationId`, Last.fm credential handoff). |
-| `Wishlist.cs` | Likes: `WishlistEntry` (name folding), `WishlistRepository` (local-first + retry queue), `SpaceStationWishlistApi`. |
+| `Wishlist.cs` | Likes: `WishlistEntry` (name folding), `WishlistRepository` (local-first + retry queue), `RemoteWishlistApi`. |
 | `PlayHistory.cs` | The last 500 tracks heard (persisted). |
 | `TrackPanel.cs` | The History / Upcoming list under or over the player: owner-drawn rows, thumbnails (`ThumbnailCache`), wheel scroll, row menu. |
 | `Upcoming.cs` | Death.FM's queue (`get_db_info` HTML fragments) parser and fetch. |
-| `Ui.cs` | Look-and-feel borrowed from the SpaceStation tray player: Segoe Fluent glyphs, `IconButton`, `DropdownButton`, `ThemedMenu`. |
+| `Ui.cs` | Shared look-and-feel pieces: Segoe Fluent glyphs, `IconButton`, `DropdownButton`, `ThemedMenu`. |
 | `UpdateChecker.cs` | Daily GitHub "latest release" check; notify-only. |
 | `LegacyMigration.cs` | One-time import from SomaMetalTray / DeathFmTray settings and the old autostart entry. |
 | `SmtcService.cs` | Drives Windows' System Media Transport Controls. |
@@ -280,14 +280,14 @@ SomaFM casting relies on the receiver's `somafm-metal` entry and is lightly test
 ## Likes and the private build
 
 Pressing the heart toggles the track in `WishlistRepository` (local `wishlist.json`, keyed by a name folding identical
-to the SpaceStation Worker's `normalizeWishlistKey` - note it uses the Win32 `NormalizeString`, because
+to the wishlist server's key normalisation - note it uses the Win32 `NormalizeString`, because
 `string.Normalize` does nothing under `InvariantGlobalization`), loves/unloves it on Last.fm if connected, and - only
-when built with credentials - queues a `POST`/`DELETE /wishlist` to the SpaceStation Worker, with a persisted
+when built with credentials - queues a `POST`/`DELETE /wishlist` to the wishlist server, with a persisted
 retry queue (latest intent per track wins; oldest-first; stops at the first failure; 401/403/408/429/5xx retried, other
 4xx dropped). It is a port of DeathFmAndroid's `WishlistRepository`.
 
 The Worker is behind a Cloudflare Access service token, so, as on Android, the sync is a **private build** feature:
-copy `local.properties.example` to `local.properties` (gitignored) and fill in the three `SPACESTATION_*` values;
+copy `local.properties.example` to `local.properties` (gitignored) and fill in the three `WISHLIST_*` values;
 `tools/GeneratePrivateConfig.cs` turns them into `PrivateConfig` constants at build time. Public/CI builds have no file,
 so the constants are empty and nothing is queued or sent. **Never share an exe built with these set - the token is
 inside it.**
@@ -301,7 +301,7 @@ inside it.**
   down). Strip mode has no room for it. The Upcoming tab appears for stations with `HasUpcoming` (Death.FM: `DeathFmQueue`
   fetches `player.php?ajax_action=get_db_info&station=dfm&asin=<now playing>` and parses the `queue_html` rows; the ASIN comes
   from the now-playing `SiteLink`). Death.FM answers 403 to Python's default User-Agent - the app sends its own product token.
-- **Controls** use SpaceStation's look (`Ui.cs`): the heart and cast are `IconButton`s with Segoe Fluent glyphs, the station
+- **Controls** use a shared look (`Ui.cs`): the heart and cast are `IconButton`s with Segoe Fluent glyphs, the station
   drop-down is a `DropdownButton` that pops a `ThemedMenu`. Menus are shown with `ThemedMenu.ShowAndDispose`, which defers the
   dispose - disposing from `Closed` crashes WinForms (regression test: `ThemedMenuTests`). Labels set `UseMnemonic = false` so
   an `&` in a track name shows.

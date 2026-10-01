@@ -6,7 +6,7 @@ using Microsoft.Build.Utilities;
 
 // Inline MSBuild task (compiled by RoslynCodeTaskFactory - see SomaMetalTray.csproj, NOT part of the app).
 // Reads local.properties (KEY=VALUE lines, # comments) and writes PrivateConfig.g.cs with the
-// SpaceStation like-sync credentials as constants; missing file or keys => empty strings => feature off.
+// wishlist-server credentials as constants; missing file or keys => empty strings => feature off.
 public class GeneratePrivateConfig : Task
 {
     [Required]
@@ -33,11 +33,11 @@ public class GeneratePrivateConfig : Task
         string code =
             "namespace SomaMetalTray;\n" +
             "internal static class PrivateConfig\n{\n" +
-            "    public const string SpaceStationUrl = " + Literal(values, "SPACESTATION_URL") + ";\n" +
-            "    public const string SpaceStationClientId = " + Literal(values, "SPACESTATION_CF_ACCESS_CLIENT_ID") + ";\n" +
-            "    public const string SpaceStationClientSecret = " + Literal(values, "SPACESTATION_CF_ACCESS_CLIENT_SECRET") + ";\n" +
+            "    public const string WishlistUrl = " + Literal(values, "WISHLIST_URL") + ";\n" +
+            "    public const string WishlistClientId = " + Literal(values, "WISHLIST_CF_ACCESS_CLIENT_ID") + ";\n" +
+            "    public const string WishlistClientSecret = " + Literal(values, "WISHLIST_CF_ACCESS_CLIENT_SECRET") + ";\n" +
             "    public const string DeathFmProxyUrl = " + Literal(values, "DEATHFM_STREAM_PROXY_URL") + ";\n" +
-            "    public static bool WishlistEnabled => SpaceStationUrl.Length > 0 && SpaceStationClientId.Length > 0 && SpaceStationClientSecret.Length > 0;\n" +
+            "    public static bool WishlistEnabled => WishlistUrl.Length > 0 && WishlistClientId.Length > 0 && WishlistClientSecret.Length > 0;\n" +
             "}\n";
 
         Directory.CreateDirectory(Path.GetDirectoryName(OutputFile));

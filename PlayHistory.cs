@@ -8,7 +8,7 @@ namespace SomaMetalTray;
 /// <summary>One track that went by while the app was playing (locally or on a Chromecast).</summary>
 public sealed record HistoryItem(DateTimeOffset At, string StationId, string Artist, string Title, string Album = "", string? ArtUrl = null)
 {
-    /// <summary>The like-able form of this item (source id matches what the Cast receiver / SpaceStation call the station).</summary>
+    /// <summary>The like-able form of this item (source id matches what the Cast receiver and the wishlist server call the station).</summary>
     public WishlistEntry ToWishlistEntry()
     {
         IStation station = Stations.ById(StationId);

@@ -40,5 +40,5 @@ Thumbs.db
 # entirely, under %AppData%\SomaMetalTray\settings.json.
 settings.json
 
-# Private-build credentials (SpaceStation like-sync token) - never commit
+# Private-build credentials (wishlist server token) - never commit
 local.properties

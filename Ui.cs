@@ -10,7 +10,7 @@ using System.Windows.Forms;
 
 namespace SomaMetalTray;
 
-// Shared look-and-feel pieces, borrowed from the SpaceStation tray player so the two apps feel alike:
+// Shared look-and-feel pieces, shared across the tray players so they feel alike:
 // Segoe Fluent icon glyphs, the icon button, and the dark rounded popup menu.
 
 /// <summary>Fonts: Segoe UI Variable where Windows has it (11), Segoe UI otherwise; Segoe Fluent Icons for glyphs (MDL2 on Windows 10).</summary>

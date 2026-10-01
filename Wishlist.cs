@@ -92,7 +92,7 @@ public interface IWishlistSender
 
 /// <summary>
 /// The liked radio tracks on this PC plus the queue of changes still to send to
-/// SpaceStation. A like takes effect immediately (the heart fills) and is delivered
+/// wishlist server. A like takes effect immediately (the heart fills) and is delivered
 /// whenever the network allows: a failed send leaves it queued for the next toggle
 /// or <see cref="FlushAsync"/> - nothing is lost while offline. Only the latest
 /// intent per track is kept, so like-then-unlike offline sends a single "remove".
@@ -298,12 +298,12 @@ public sealed class FileTextStorage(string path) : ITextStorage
 }
 
 /// <summary>
-/// Sends wishlist changes to a private SpaceStation Worker (POST/DELETE /wishlist,
+/// Sends wishlist changes to a private wishlist server (POST/DELETE /wishlist,
 /// authenticated with its Cloudflare Access service token). Only constructed in
 /// builds whose local.properties supplied those credentials (see PrivateConfig) -
 /// public release builds have none, so the feature simply isn't there.
 /// </summary>
-public sealed class SpaceStationWishlistApi : IWishlistSender, IDisposable
+public sealed class RemoteWishlistApi : IWishlistSender, IDisposable
 {
     // Auth problems and throttling aren't the entry's fault, so those stay queued for a later retry;
     // any other 4xx means the server looked at it and said no - retrying forever would wedge the queue.
@@ -312,7 +312,7 @@ public sealed class SpaceStationWishlistApi : IWishlistSender, IDisposable
     private readonly string _baseUrl;
     private readonly HttpClient _http;
 
-    public SpaceStationWishlistApi(string baseUrl, string clientId, string clientSecret, HttpClient? http = null)
+    public RemoteWishlistApi(string baseUrl, string clientId, string clientSecret, HttpClient? http = null)
     {
         _baseUrl = baseUrl.TrimEnd('/');
         _http = http ?? new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
