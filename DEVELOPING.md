@@ -266,6 +266,13 @@ a minute) when the window is activated, at startup and on switching to Death.FM.
 
 A real fix would be a player with a configurable start threshold (e.g. LibVLC's `--network-caching`) instead of Media Foundation.
 
+**LibVLC spike (branch `spike/libvlc`).** `AudioPlayerService` has an opt-in LibVLC engine: set `BLASTBEAT_ENGINE=vlc` (and optionally
+`BLASTBEAT_VLC_CACHING_MS`, default 1000) before launching. Straight against `https://death.fm/live` - no proxy - LibVLC started in
+~1.2-1.5s with **0 rebuffers in 20s** at `--network-caching` of 300, 1000 and 3000ms (one run each, standalone console harness).
+Cost: the `VideoLAN.LibVLC.Windows` package adds ~300MB of native libs to the output (needs plugin pruning / a download-on-demand
+step before it could ship), and LibVLC raises events on its own threads, so teardown goes through `Task.Run`. Not yet checked in the
+real app: SMTC/volume behaviour, sleep/resume recovery, Metal Detector, single-file publish.
+
 **Metal Detector** is SomaFM's `metal` channel (`api.somafm.com/metal130.pls`, `somafm.com/songs/metal.json`).
 
 ## Chromecast

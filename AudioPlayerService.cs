@@ -10,6 +10,9 @@ using Microsoft.Win32;
 using Timer = System.Threading.Timer;
 using Windows.Media.Core;
 using Windows.Media.Playback;
+using LibVLCSharp.Shared;
+using MediaPlayer = Windows.Media.Playback.MediaPlayer;
+using VlcMediaPlayer = LibVLCSharp.Shared.MediaPlayer;
 
 namespace SomaMetalTray;
 
@@ -56,6 +59,13 @@ public sealed class AudioPlayerService : IDisposable
     private MediaPlayer? _player;
     private double _volume;
 
+    // SPIKE: LibVLC engine, selected with BLASTBEAT_ENGINE=vlc (see DEVELOPING.md "Death.FM start-up pauses"). Unlike Media
+    // Foundation it has a configurable start threshold (--network-caching), which is the whole point.
+    private static readonly bool UseVlc = string.Equals(Environment.GetEnvironmentVariable("BLASTBEAT_ENGINE"), "vlc", StringComparison.OrdinalIgnoreCase);
+    private static int VlcCachingMs => int.TryParse(Environment.GetEnvironmentVariable("BLASTBEAT_VLC_CACHING_MS"), out int ms) ? ms : 1000;
+    private static LibVLC? _vlc;
+    private VlcMediaPlayer? _vlcPlayer;
+
     private List<string> _streamUrls = new();
     private int _streamUrlIndex;
     private bool _userWantsPlaying;
@@ -101,6 +111,8 @@ public sealed class AudioPlayerService : IDisposable
             _volume = clamped;
             if (_player is not null)
                 _player.Volume = clamped;
+            if (_vlcPlayer is not null)
+                _vlcPlayer.Volume = (int)Math.Round(clamped * 100);
             _settings.Volume = clamped;
             SettingsStore.Save(_settings);
         }
@@ -147,6 +159,20 @@ public sealed class AudioPlayerService : IDisposable
         // a second MediaPlayer on top of the old one.
         DisposeCurrentPlayer();
 
+        if (UseVlc)
+        {
+            try
+            {
+                PlayVlc(url);
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"AudioPlayerService.Play() - LibVLC failed to start ({ex.Message}), advancing to next stream URL");
+                _ = AdvanceAndRetryAsync();
+            }
+            return;
+        }
+
         try
         {
             var player = new MediaPlayer
@@ -182,6 +208,62 @@ public sealed class AudioPlayerService : IDisposable
         }
     }
 
+    private void PlayVlc(string url)
+    {
+        if (_vlc is null)
+        {
+            Core.Initialize(); // finds libvlc under <exe dir>\libvlc\win-x64 (from the VideoLAN.LibVLC.Windows package)
+            _vlc = new LibVLC("--no-video", "--no-osd", "--no-snapshot-preview", $"--network-caching={VlcCachingMs}");
+        }
+
+        var player = new VlcMediaPlayer(_vlc) { Volume = (int)Math.Round(_volume * 100) };
+        player.Opening += OnVlcOpening;
+        player.Buffering += OnVlcBuffering;
+        player.Playing += OnVlcPlaying;
+        player.Paused += OnVlcPaused;
+        player.EncounteredError += OnVlcError;
+        _vlcPlayer = player;
+
+        using var media = new Media(_vlc, new Uri(url));
+        player.Play(media);
+    }
+
+    // LibVLC raises these on its own threads, and disposing a player from inside one of its callbacks deadlocks - so
+    // anything that tears down or restarts goes through Task.Run.
+    private void OnVlcOpening(object? s, EventArgs e) => VlcState(s, PlaybackState.Buffering, "opening");
+    private void OnVlcPlaying(object? s, EventArgs e) => VlcState(s, PlaybackState.Playing, "playing");
+    private void OnVlcPaused(object? s, EventArgs e) => VlcState(s, _userWantsPlaying ? PlaybackState.Buffering : PlaybackState.Stopped, "paused");
+
+    private void OnVlcBuffering(object? s, MediaPlayerBufferingEventArgs e)
+    {
+        // Cache is 0-100 and fires repeatedly; below 100 the output is starved, 100 means it has resumed.
+        if (e.Cache < 100f)
+            VlcState(s, PlaybackState.Buffering, $"buffering {e.Cache:0}%");
+        else
+            VlcState(s, PlaybackState.Playing, "buffered");
+    }
+
+    private void OnVlcError(object? s, EventArgs e)
+    {
+        if (!ReferenceEquals(s, _vlcPlayer))
+            return;
+        Logger.Log($"LibVLC.EncounteredError - userWantsPlaying={_userWantsPlaying}");
+        if (_userWantsPlaying)
+            _ = Task.Run(AdvanceAndRetryAsync);
+    }
+
+    private void VlcState(object? sender, PlaybackState mapped, string detail)
+    {
+        if (!ReferenceEquals(sender, _vlcPlayer))
+            return; // a straggler from a player we've already replaced
+        // Buffering events spam while the cache fills - only log/raise on an actual change.
+        if (mapped == _lastState)
+            return;
+        Logger.Log($"LibVLC state - {detail}, mapped={mapped}, userWantsPlaying={_userWantsPlaying}");
+        MarkState(mapped);
+        PlaybackStateChanged?.Invoke(mapped);
+    }
+
     public void Stop()
     {
         Logger.Log($"AudioPlayerService.Stop() - userWantsPlaying was {_userWantsPlaying}");
@@ -196,6 +278,19 @@ public sealed class AudioPlayerService : IDisposable
     // it's no longer the "current" one.
     private void DisposeCurrentPlayer()
     {
+        VlcMediaPlayer? oldVlc = _vlcPlayer;
+        _vlcPlayer = null;
+        if (oldVlc is not null)
+        {
+            oldVlc.Opening -= OnVlcOpening;
+            oldVlc.Buffering -= OnVlcBuffering;
+            oldVlc.Playing -= OnVlcPlaying;
+            oldVlc.Paused -= OnVlcPaused;
+            oldVlc.EncounteredError -= OnVlcError;
+            // Stop() can block on the network, so keep it off the UI thread.
+            _ = Task.Run(() => { try { oldVlc.Stop(); oldVlc.Dispose(); } catch { } });
+        }
+
         MediaPlayer? old = _player;
         _player = null;
         if (old is null)
