@@ -42,3 +42,6 @@ settings.json
 
 # Private-build credentials (wishlist server token) - never commit
 local.properties
+
+# BASS native libraries - not redistributable from this repo (see BassEngine / DEVELOPING.md)
+native/

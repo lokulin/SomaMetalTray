@@ -32,6 +32,10 @@ public sealed class AppSettings
     // element for a separate VolumeService to wrap here).
     public double? Volume { get; set; }
 
+    // Playback engine: "bass" or "mediafoundation" (see AudioEngines). Null means the build's default; the
+    // BLASTBEAT_ENGINE environment variable overrides this.
+    public string? AudioEngine { get; set; }
+
     // Last.fm scrobbling. The API key/secret identifying this app to Last.fm's
     // API are compiled-in constants (see AppCredentials), not per-user
     // settings. LastFmSessionKey/LastFmUsername are filled in automatically

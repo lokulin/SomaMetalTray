@@ -266,12 +266,26 @@ a minute) when the window is activated, at startup and on switching to Death.FM.
 
 A real fix would be a player with a configurable start threshold (e.g. LibVLC's `--network-caching`) instead of Media Foundation.
 
-**LibVLC spike (branch `spike/libvlc`).** `AudioPlayerService` has an opt-in LibVLC engine: set `BLASTBEAT_ENGINE=vlc` (and optionally
-`BLASTBEAT_VLC_CACHING_MS`, default 1000) before launching. Straight against `https://death.fm/live` - no proxy - LibVLC started in
-~1.2-1.5s with **0 rebuffers in 20s** at `--network-caching` of 300, 1000 and 3000ms (one run each, standalone console harness).
-Cost: the `VideoLAN.LibVLC.Windows` package adds ~300MB of native libs to the output (needs plugin pruning / a download-on-demand
-step before it could ship), and LibVLC raises events on its own threads, so teardown goes through `Task.Run`. Not yet checked in the
-real app: SMTC/volume behaviour, sleep/resume recovery, Metal Detector, single-file publish.
+**Engines (branch `spike/libvlc`).** Playback goes through `IAudioEngine` (`AudioEngines.Create` picks one): `MediaFoundationEngine`
+(the original) or `BassEngine`. Choose with `BLASTBEAT_ENGINE=bass|mediafoundation`, else `AudioEngine` in `settings.json`, else
+`AudioEngines.Default` (currently `bass`). If BASS's DLLs are missing it falls back to Media Foundation and logs why.
+
+Measured against `https://death.fm/live` directly, no proxy (standalone harness, 1-3 runs each, indicative):
+
+| Engine | Time to first audio | Stalls after start | Added size |
+|---|---|---|---|
+| Media Foundation (`RealTimePlayback`) | ~0.15-1s | 1 | none |
+| LibVLC, `--network-caching` 300-3000ms | 1.2-1.5s | 0 | ~300MB |
+| BASS, `NetPreBuffer` 0% | 1.4s | 1 | ~0.5MB |
+| BASS, `NetPreBuffer` **25%** | 1.7s | 0 | ~0.5MB |
+| BASS, `NetPreBuffer` 75% | 2.5s | 0 | ~0.5MB |
+
+BASS needs `bass.dll` and `bass_aac.dll` (x64) beside the exe. They are **not committed** (BASS can't be redistributed from here):
+download `bass24.zip` and `bass_aac24.zip` from https://www.un4seen.com/ and put the DLLs in `native/bass/x64/`; the csproj then copies
+them to the build and publish output, kept loose (`ExcludeFromSingleFile`). **Licence:** BASS is free for non-commercial use only;
+if that changes the fallback choice is libmpv (LGPL, ~30MB) - only `BassEngine` and `AudioEngines` would change. A LibVLC engine
+is in git history (commit e3a58c4). BASS has no state events (a 250ms poll maps `ChannelIsActive`), doesn't follow default-device
+changes after `Init` (so each session re-inits), and fails the session if the device goes away so the service restarts it.
 
 **Metal Detector** is SomaFM's `metal` channel (`api.somafm.com/metal130.pls`, `somafm.com/songs/metal.json`).
 

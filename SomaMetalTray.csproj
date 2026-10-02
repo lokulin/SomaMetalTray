@@ -38,9 +38,16 @@
 
   <ItemGroup>
     <PackageReference Include="DiscordRichPresence" Version="1.6.1.70" />
-    <PackageReference Include="LibVLCSharp" Version="3.10.1" />
+    <PackageReference Include="ManagedBass" Version="4.0.2" />
     <PackageReference Include="Sharpcaster" Version="3.0.0" />
-    <PackageReference Include="VideoLAN.LibVLC.Windows" Version="3.0.24" />
+  </ItemGroup>
+
+  <!-- BASS native libraries (see BassEngine). Not committed - download bass24.zip and bass_aac24.zip from
+       https://www.un4seen.com/ and put the x64 DLLs in native\bass\x64. Without them the app still builds and
+       falls back to Media Foundation at runtime. They stay loose beside the exe (not bundled into a single file). -->
+  <ItemGroup Condition="Exists('native\bass\x64\bass.dll') And Exists('native\bass\x64\bass_aac.dll')">
+    <None Include="native\bass\x64\bass.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" Link="bass.dll" />
+    <None Include="native\bass\x64\bass_aac.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" Link="bass_aac.dll" />
   </ItemGroup>
 
   <ItemGroup>

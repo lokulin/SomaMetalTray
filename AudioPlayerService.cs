@@ -8,11 +8,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Win32;
 using Timer = System.Threading.Timer;
-using Windows.Media.Core;
-using Windows.Media.Playback;
-using LibVLCSharp.Shared;
-using MediaPlayer = Windows.Media.Playback.MediaPlayer;
-using VlcMediaPlayer = LibVLCSharp.Shared.MediaPlayer;
 
 namespace SomaMetalTray;
 
@@ -26,26 +21,16 @@ public enum PlaybackState
 }
 
 /// <summary>
-/// Plays the selected station's stream directly via Windows.Media.Playback.MediaPlayer
-/// (WinRT - already available through the net10.0-windows10.0.19041.0 TFM, same as
-/// SmtcService's Windows.Media.SystemMediaTransportControls, no extra package needed).
+/// Plays the selected station's stream through an <see cref="IAudioEngine"/> (BASS or Windows' MediaPlayer - see
+/// <see cref="AudioEngines"/>) and owns everything engine-independent: volume persistence, fetching/parsing the
+/// channel's playlist for a live stream URL, and rotating to the next URL (or re-fetching) on playback failure -
+/// SomaFM's ice servers rotate and occasionally go down individually.
 ///
-/// Replaces DeathFmTray's NowPlayingService+VolumeService (which drove a WebView2-hosted
-/// &lt;audio&gt; element) entirely - there's no web page here, so this owns both playback
-/// and volume persistence directly; there's exactly one place (this class) that reads or
-/// writes AppSettings.Volume.
+/// Replaces DeathFmTray's NowPlayingService+VolumeService (which drove a WebView2-hosted &lt;audio&gt; element) entirely;
+/// there's exactly one place (this class) that reads or writes AppSettings.Volume.
 ///
-/// Also owns fetching/parsing the channel's .pls playlist to find a live ice*.somafm.com
-/// stream URL, and rotates to the next listed URL (or re-fetches the .pls) on playback
-/// failure - SomaFM's ice servers rotate and occasionally go down individually.
-///
-/// IMPORTANT: this constructs a *fresh* MediaPlayer instance on every Play() rather than
-/// reusing one long-lived instance across stop/start cycles. Reusing a single instance
-/// across a Source = null -> new Source cycle for a live network stream was found to
-/// sometimes leave the MediaPlayer in a state where Play() silently no-ops (no exception,
-/// no further PlaybackStateChanged/MediaFailed events) after a Stop() - reported
-/// symptom: pausing playback via the Windows SMTC flyout, then being unable to resume.
-/// See Logger/debug.log for the diagnostics added alongside this fix.
+/// Every Play() starts a fresh engine session rather than reusing one across stop/start cycles (see
+/// MediaFoundationEngine for the bug that motivated that). See Logger/debug.log for state diagnostics.
 /// </summary>
 public sealed class AudioPlayerService : IDisposable
 {
@@ -53,18 +38,8 @@ public sealed class AudioPlayerService : IDisposable
     private readonly AppSettings _settings;
     private IStation _station;
 
-    // The live MediaPlayer for the current play session - null whenever
-    // nothing is playing/starting. Recreated from scratch on every Play(),
-    // never reused across a Stop() -> Play() cycle (see class remarks above).
-    private MediaPlayer? _player;
+    private readonly IAudioEngine _engine;
     private double _volume;
-
-    // SPIKE: LibVLC engine, selected with BLASTBEAT_ENGINE=vlc (see DEVELOPING.md "Death.FM start-up pauses"). Unlike Media
-    // Foundation it has a configurable start threshold (--network-caching), which is the whole point.
-    private static readonly bool UseVlc = string.Equals(Environment.GetEnvironmentVariable("BLASTBEAT_ENGINE"), "vlc", StringComparison.OrdinalIgnoreCase);
-    private static int VlcCachingMs => int.TryParse(Environment.GetEnvironmentVariable("BLASTBEAT_VLC_CACHING_MS"), out int ms) ? ms : 1000;
-    private static LibVLC? _vlc;
-    private VlcMediaPlayer? _vlcPlayer;
 
     private List<string> _streamUrls = new();
     private int _streamUrlIndex;
@@ -93,6 +68,11 @@ public sealed class AudioPlayerService : IDisposable
         _station = station;
         _volume = Math.Clamp(_settings.Volume ?? 0.8, 0.0, 1.0);
 
+        _engine = AudioEngines.Create(settings);
+        _engine.StateChanged += OnEngineStateChanged;
+        _engine.Failed += OnEngineFailed;
+        Logger.Log($"AudioPlayerService - engine={_engine.Name}");
+
         _http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
         _http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue(AppInfo.UserAgentProduct, UpdateChecker.CurrentVersion().ToString(3)));
 
@@ -101,7 +81,7 @@ public sealed class AudioPlayerService : IDisposable
         _watchdog = new Timer(_ => CheckForStall(), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
     }
 
-    /// <summary>Volume as 0.0-1.0. Setting it both applies it live (if a MediaPlayer is currently live) and persists it (this is the one place that owns volume persistence).</summary>
+    /// <summary>Volume as 0.0-1.0. Setting it both applies it live (if a session is currently live) and persists it (this is the one place that owns volume persistence).</summary>
     public double Volume
     {
         get => _volume;
@@ -109,10 +89,7 @@ public sealed class AudioPlayerService : IDisposable
         {
             double clamped = Math.Clamp(value, 0.0, 1.0);
             _volume = clamped;
-            if (_player is not null)
-                _player.Volume = clamped;
-            if (_vlcPlayer is not null)
-                _vlcPlayer.Volume = (int)Math.Round(clamped * 100);
+            _engine.SetVolume(clamped);
             _settings.Volume = clamped;
             SettingsStore.Save(_settings);
         }
@@ -153,176 +130,38 @@ public sealed class AudioPlayerService : IDisposable
         string url = _streamUrls[_streamUrlIndex];
         Logger.Log($"AudioPlayerService.Play() - streamUrl={url}, userWantsPlaying={_userWantsPlaying}");
 
-        // Tear down whatever the previous session's MediaPlayer was (if any)
-        // before building a fresh one - a call to Play() while already
-        // playing (or mid-retry) should always start clean rather than layer
-        // a second MediaPlayer on top of the old one.
-        DisposeCurrentPlayer();
-
-        if (UseVlc)
-        {
-            try
-            {
-                PlayVlc(url);
-            }
-            catch (Exception ex)
-            {
-                Logger.Log($"AudioPlayerService.Play() - LibVLC failed to start ({ex.Message}), advancing to next stream URL");
-                _ = AdvanceAndRetryAsync();
-            }
-            return;
-        }
-
         try
         {
-            var player = new MediaPlayer
-            {
-                AutoPlay = false,
-                Volume = _volume,
-                // Low-latency live buffering. Without it Media Foundation insists on a multi-second buffer and, against Death.FM (a ~4s
-                // burst, then exactly real time), pauses to refill ~3.3s at a time 2-3 times after starting; with it that drops to
-                // about one pause. See DEVELOPING.md ("Death.FM start-up pauses").
-                RealTimePlayback = true,
-            };
-            // MediaPlayer auto-registers its own System Media Transport
-            // Controls session by default (separate from the one SmtcService
-            // manages via GetForWindow) - left enabled, Windows' media flyout
-            // shows a second, unbranded entry (just the app's AUMID as its
-            // title, no metadata/art) alongside our real one. We only ever
-            // want the one SmtcService drives.
-            player.CommandManager.IsEnabled = false;
-            player.MediaFailed += OnMediaFailed;
-            player.PlaybackSession.PlaybackStateChanged += OnPlaybackSessionStateChanged;
-            _player = player;
-
-            var uri = new Uri(url);
-            player.Source = MediaSource.CreateFromUri(uri);
-            player.Play();
+            // Start() tears down whatever the previous session was, so a Play() while already playing (or
+            // mid-retry) starts clean rather than layering a second session on top of the old one.
+            _engine.Start(url, _volume);
         }
         catch (Exception ex)
         {
-            // Bad URL or MediaSource creation failure - treat like a playback
+            // Bad URL or session creation failure - treat like a playback
             // failure and roll to the next candidate stream URL.
             Logger.Log($"AudioPlayerService.Play() - failed to start ({ex.Message}), advancing to next stream URL");
             _ = AdvanceAndRetryAsync();
         }
     }
 
-    private void PlayVlc(string url)
-    {
-        if (_vlc is null)
-        {
-            Core.Initialize(); // finds libvlc under <exe dir>\libvlc\win-x64 (from the VideoLAN.LibVLC.Windows package)
-            _vlc = new LibVLC("--no-video", "--no-osd", "--no-snapshot-preview", $"--network-caching={VlcCachingMs}");
-        }
-
-        var player = new VlcMediaPlayer(_vlc) { Volume = (int)Math.Round(_volume * 100) };
-        player.Opening += OnVlcOpening;
-        player.Buffering += OnVlcBuffering;
-        player.Playing += OnVlcPlaying;
-        player.Paused += OnVlcPaused;
-        player.EncounteredError += OnVlcError;
-        _vlcPlayer = player;
-
-        using var media = new Media(_vlc, new Uri(url));
-        player.Play(media);
-    }
-
-    // LibVLC raises these on its own threads, and disposing a player from inside one of its callbacks deadlocks - so
-    // anything that tears down or restarts goes through Task.Run.
-    private void OnVlcOpening(object? s, EventArgs e) => VlcState(s, PlaybackState.Buffering, "opening");
-    private void OnVlcPlaying(object? s, EventArgs e) => VlcState(s, PlaybackState.Playing, "playing");
-    private void OnVlcPaused(object? s, EventArgs e) => VlcState(s, _userWantsPlaying ? PlaybackState.Buffering : PlaybackState.Stopped, "paused");
-
-    private void OnVlcBuffering(object? s, MediaPlayerBufferingEventArgs e)
-    {
-        // Cache is 0-100 and fires repeatedly; below 100 the output is starved, 100 means it has resumed.
-        if (e.Cache < 100f)
-            VlcState(s, PlaybackState.Buffering, $"buffering {e.Cache:0}%");
-        else
-            VlcState(s, PlaybackState.Playing, "buffered");
-    }
-
-    private void OnVlcError(object? s, EventArgs e)
-    {
-        if (!ReferenceEquals(s, _vlcPlayer))
-            return;
-        Logger.Log($"LibVLC.EncounteredError - userWantsPlaying={_userWantsPlaying}");
-        if (_userWantsPlaying)
-            _ = Task.Run(AdvanceAndRetryAsync);
-    }
-
-    private void VlcState(object? sender, PlaybackState mapped, string detail)
-    {
-        if (!ReferenceEquals(sender, _vlcPlayer))
-            return; // a straggler from a player we've already replaced
-        // Buffering events spam while the cache fills - only log/raise on an actual change.
-        if (mapped == _lastState)
-            return;
-        Logger.Log($"LibVLC state - {detail}, mapped={mapped}, userWantsPlaying={_userWantsPlaying}");
-        MarkState(mapped);
-        PlaybackStateChanged?.Invoke(mapped);
-    }
-
     public void Stop()
     {
         Logger.Log($"AudioPlayerService.Stop() - userWantsPlaying was {_userWantsPlaying}");
         _userWantsPlaying = false;
-        DisposeCurrentPlayer();
+        _engine.Stop();
         MarkState(PlaybackState.Stopped);
         PlaybackStateChanged?.Invoke(PlaybackState.Stopped);
     }
 
-    // Unsubscribes event handlers before disposing, so a straggling event from
-    // an already-torn-down MediaPlayer can never fire into this service after
-    // it's no longer the "current" one.
-    private void DisposeCurrentPlayer()
+    private void OnEngineStateChanged(PlaybackState raw)
     {
-        VlcMediaPlayer? oldVlc = _vlcPlayer;
-        _vlcPlayer = null;
-        if (oldVlc is not null)
-        {
-            oldVlc.Opening -= OnVlcOpening;
-            oldVlc.Buffering -= OnVlcBuffering;
-            oldVlc.Playing -= OnVlcPlaying;
-            oldVlc.Paused -= OnVlcPaused;
-            oldVlc.EncounteredError -= OnVlcError;
-            // Stop() can block on the network, so keep it off the UI thread.
-            _ = Task.Run(() => { try { oldVlc.Stop(); oldVlc.Dispose(); } catch { } });
-        }
+        // A pause nobody asked for is the engine running dry, so it reads as buffering; after a deliberate Stop() it is just stopped.
+        PlaybackState mapped = raw == PlaybackState.Paused
+            ? (_userWantsPlaying ? PlaybackState.Buffering : PlaybackState.Stopped)
+            : raw;
 
-        MediaPlayer? old = _player;
-        _player = null;
-        if (old is null)
-            return;
-
-        try
-        {
-            old.MediaFailed -= OnMediaFailed;
-            old.PlaybackSession.PlaybackStateChanged -= OnPlaybackSessionStateChanged;
-            old.Pause();
-            old.Source = null; // releases the live connection instead of leaving it buffering in the background
-            old.Dispose();
-        }
-        catch
-        {
-            // Best-effort - tearing down the old player should never throw into a UI event handler.
-        }
-    }
-
-    private void OnPlaybackSessionStateChanged(MediaPlaybackSession sender, object args)
-    {
-        MediaPlaybackState nativeState = sender.PlaybackState;
-        PlaybackState mapped = nativeState switch
-        {
-            MediaPlaybackState.Playing => PlaybackState.Playing,
-            MediaPlaybackState.Paused => _userWantsPlaying ? PlaybackState.Buffering : PlaybackState.Stopped,
-            MediaPlaybackState.Buffering => PlaybackState.Buffering,
-            MediaPlaybackState.Opening => PlaybackState.Buffering,
-            _ => PlaybackState.Stopped,
-        };
-
-        Logger.Log($"MediaPlayer.PlaybackStateChanged - native={nativeState}, mapped={mapped}, userWantsPlaying={_userWantsPlaying}");
+        Logger.Log($"AudioPlayerService - engine state={raw}, mapped={mapped}, userWantsPlaying={_userWantsPlaying}");
 
         MarkState(mapped);
 
@@ -334,9 +173,9 @@ public sealed class AudioPlayerService : IDisposable
     // re-fetch the .pls entirely (the rotation may have changed) and try
     // again from the top. Only acts if the user still wants to be playing -
     // a failure after a deliberate Stop() shouldn't restart playback.
-    private void OnMediaFailed(MediaPlayer sender, MediaPlayerFailedEventArgs args)
+    private void OnEngineFailed()
     {
-        Logger.Log($"MediaPlayer.MediaFailed - error={args.Error}, message={args.ErrorMessage}, userWantsPlaying={_userWantsPlaying}");
+        Logger.Log($"AudioPlayerService - engine reported failure, userWantsPlaying={_userWantsPlaying}");
 
         if (!_userWantsPlaying)
             return;
@@ -457,7 +296,7 @@ public sealed class AudioPlayerService : IDisposable
         SystemEvents.PowerModeChanged -= OnPowerModeChanged;
         NetworkChange.NetworkAvailabilityChanged -= OnNetworkAvailabilityChanged;
         _watchdog.Dispose();
-        DisposeCurrentPlayer();
+        _engine.Dispose();
         _http.Dispose();
     }
 }
