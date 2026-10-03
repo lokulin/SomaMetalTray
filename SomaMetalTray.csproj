@@ -20,8 +20,8 @@
     <Product>Blastbeat Player</Product>
     <Description>A Windows tray player for Death.FM and SomaFM's Metal Detector, with Chromecast, likes, history and Last.fm</Description>
     <Company>Terra Eclectic</Company>
-    <Version>0.5.0</Version>
-    <FileVersion>0.5.0.0</FileVersion>
+    <Version>0.6.0</Version>
+    <FileVersion>0.6.0.0</FileVersion>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <Platforms>x64</Platforms>
     <StartupObject>SomaMetalTray.Program</StartupObject>
