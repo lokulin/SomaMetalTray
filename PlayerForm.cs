@@ -101,6 +101,7 @@ public sealed class PlayerForm : Form
     private bool _isPlaying;   // true only while real audio is flowing (PlaybackState.Playing)
     private bool _isActive;    // true whenever the user hasn't stopped playback (Playing or Buffering) - drives the toggle button/progress bar
     private TrackMetadata? _lastMetadata;
+    private bool _nowPlayingRunning; // the now-playing feed is only polled while something is (or is about to be) listening
 
     private DateTimeOffset? _trackStartTime;
     private double _progressFraction;
@@ -468,7 +469,7 @@ _stationButton.SetBounds(_castButton.Left - 6 - _m.DropdownWidth, clusterY + 3, 
         if (_mode == ViewMode.Strip)
         {
             // The strip has no title/artist labels - the title bar says what's playing instead.
-            string nowPlayingText = _lastMetadata is TrackMetadata track ? $"{track.Artist} \u2014 {track.Title}" : AppInfo.Name;
+            string nowPlayingText = _lastMetadata is TrackMetadata track ? $"{track.Artist} \u2014 {track.Title}" : _station.DisplayName;
             using var trimFormat = new StringFormat { LineAlignment = StringAlignment.Center, Alignment = StringAlignment.Near, Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap };
             g.DrawString(nowPlayingText, font, textBrush, textRect, trimFormat);
             return;
@@ -687,7 +688,10 @@ _stationButton.SetBounds(_castButton.Left - 6 - _m.DropdownWidth, clusterY + 3, 
         // artwork resolves (which can take a few seconds through the
         // fanart.tv/Deezer/Bandcamp/iTunes chain). _nowPlaying.LogoUrl already
         // has a sane hardcoded default even before channels.json has loaded.
-        _ = LoadPlaceholderArtAsync();
+        if (WantsNowPlaying)
+            _ = LoadPlaceholderArtAsync();
+        else
+            ShowStationIdle();
 
         try
         {
@@ -698,13 +702,85 @@ _stationButton.SetBounds(_castButton.Left - 6 - _m.DropdownWidth, clusterY + 3, 
             Debug.WriteLine($"AudioPlayerService.InitializeAsync failed: {ex.Message}");
         }
 
+        if (WantsNowPlaying)
+            StartNowPlaying();
+    }
+
+    // Live radio cannot be paused, so "stopped" has nothing on air to describe: the now-playing feed is only polled while playing (or casting).
+
+    private bool WantsNowPlaying => _isActive || _cast.State != CastState.Idle;
+
+    /// <summary>Starts polling the station's feed (an immediate poll, then the usual schedule); no-op when it is already running.</summary>
+    private void StartNowPlaying()
+    {
+        if (_nowPlayingRunning || IsDisposed)
+            return;
+
+        _nowPlayingRunning = true;
+        _ = RunNowPlayingAsync(_nowPlaying);
+    }
+
+    private static async Task RunNowPlayingAsync(INowPlayingSource source)
+    {
         try
         {
-            await _nowPlaying.StartAsync();
+            await source.StartAsync();
         }
         catch (Exception ex)
         {
             Debug.WriteLine($"INowPlayingSource.StartAsync failed: {ex.Message}");
+        }
+    }
+
+    private void StopNowPlaying()
+    {
+        _nowPlayingRunning = false;
+        _nowPlaying.Stop();
+    }
+
+    /// <summary>
+    /// What a stopped player shows: the station's name and logo, no track (title, heart, progress and the SMTC entry all forget the
+    /// last one), and nothing looked up for it.
+    /// </summary>
+    private void ShowStationIdle()
+    {
+        if (IsDisposed)
+            return;
+
+        _artworkCts?.Cancel();
+        _lastMetadata = null;
+        UpdateHeart();
+        _trackStartTime = null;
+        _realDuration = null;
+        _titleLabel.Text = _station.DisplayName;
+        _artistLabel.Text = "";
+        _albumLabel.Text = "";
+        SetAlbumArt(null);
+        UpdateProgress();
+        if (_mode == ViewMode.Strip)
+            Invalidate(new Rectangle(0, 0, ClientSize.Width, TitleBarHeight));
+        if (_panelOpen && _panel.Tab == PanelTab.Upcoming)
+            _ = RefreshUpcomingAsync();
+        _ = ShowStationIdleArtAsync(_station);
+    }
+
+    private async Task ShowStationIdleArtAsync(IStation station)
+    {
+        try
+        {
+            Image? logo = await _artwork.GetFallbackLogoAsync(_nowPlaying.LogoUrl, CancellationToken.None);
+            // Only while still idle on the same station: a track or a station switch that arrived meanwhile owns the cover now.
+            if (IsDisposed || WantsNowPlaying || _lastMetadata is not null || !ReferenceEquals(station, _station))
+                return;
+
+            if (logo is not null)
+                SetAlbumArt(logo);
+            if (_smtc is not null)
+                await _smtc.UpdateMetadataAsync(station.DisplayName, "", "", _artwork.FallbackLogoPath);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"ShowStationIdleArtAsync failed: {ex.Message}");
         }
     }
 
@@ -717,6 +793,9 @@ _stationButton.SetBounds(_castButton.Left - 6 - _m.DropdownWidth, clusterY + 3, 
         // insurance if that ever changes.
         BeginInvoke(new Action(() =>
         {
+            if (!_nowPlayingRunning || IsDisposed)
+                return; // stopped while this was on its way
+
             _lastMetadata = metadata;
             if (_mode == ViewMode.Strip)
                 Invalidate(new Rectangle(0, 0, ClientSize.Width, TitleBarHeight));
@@ -989,6 +1068,14 @@ _stationButton.SetBounds(_castButton.Left - 6 - _m.DropdownWidth, clusterY + 3, 
             if (_cast.State == CastState.Casting && _isActive)
                 _audio.Stop();
 
+            if (_cast.State != CastState.Idle)
+                StartNowPlaying();
+            else if (!_isActive)
+            {
+                StopNowPlaying();
+                ShowStationIdle();
+            }
+
             if (_cast.State == CastState.Casting && _lastMetadata is TrackMetadata castTrack)
                 RecordHistory(castTrack);
 
@@ -1088,6 +1175,12 @@ _stationButton.SetBounds(_castButton.Left - 6 - _m.DropdownWidth, clusterY + 3, 
         _upcomingCts?.Cancel();
         var cts = new CancellationTokenSource();
         _upcomingCts = cts;
+
+        if (!WantsNowPlaying)
+        {
+            _panel.SetUpcoming(null, "Press play to see what's coming up.");
+            return;
+        }
 
         if (_lastMetadata is not TrackMetadata track)
         {
@@ -1201,6 +1294,7 @@ _stationButton.SetBounds(_castButton.Left - 6 - _m.DropdownWidth, clusterY + 3, 
         _artworkCts?.Cancel();
         _nowPlaying.MetadataChanged -= OnMetadataChanged;
         _nowPlaying.Dispose();
+        _nowPlayingRunning = false;
 
         _station = station;
         _stationButton.Text = station.DisplayName;
@@ -1228,7 +1322,11 @@ _stationButton.SetBounds(_castButton.Left - 6 - _m.DropdownWidth, clusterY + 3, 
         _nowPlaying = station.CreateNowPlaying();
         _nowPlaying.MetadataChanged += OnMetadataChanged;
 
-        _ = LoadPlaceholderArtAsync();
+        bool listening = resume || _cast.State != CastState.Idle;
+        if (listening)
+            _ = LoadPlaceholderArtAsync();
+        else
+            ShowStationIdle(); // stopped: the new station's name and logo, nothing polled
         _discord.StationName = station.DisplayName;
         _ = _cast.SwitchStationAsync(station);
         Invalidate();
@@ -1239,7 +1337,8 @@ _stationButton.SetBounds(_castButton.Left - 6 - _m.DropdownWidth, clusterY + 3, 
             await _audio.InitializeAsync();
             if (resume && !IsDisposed)
                 _audio.Play();
-            await _nowPlaying.StartAsync();
+            if (listening)
+                StartNowPlaying();
         }
         catch (Exception ex)
         {
@@ -1297,16 +1396,23 @@ _stationButton.SetBounds(_castButton.Left - 6 - _m.DropdownWidth, clusterY + 3, 
             {
                 _trackStartTime = null;
                 _progressFraction = 0;
+                if (_cast.State == CastState.Idle)
+                {
+                    StopNowPlaying();
+                    ShowStationIdle();
+                }
             }
-            else if (_trackStartTime is null && _lastMetadata is TrackMetadata resumed)
+            else
             {
-                // Resuming playback (e.g. after Stop) without a genuinely new
-                // track showing up - SomaFmService dedupes by track identity,
-                // so no fresh MetadataChanged event fires here. Without this,
-                // the progress bar stayed hidden forever after a resume,
-                // since only OnMetadataChanged used to set _trackStartTime.
-                _trackStartTime = resumed.StartedAt ?? DateTimeOffset.UtcNow;
-                UpdateProgress();
+                StartNowPlaying(); // a fresh poll: the track on air, its art and its start are looked up again
+
+                // Playing again while the feed was already running (it never stopped because a Chromecast had the stream) and the track
+                // has not changed: no new metadata event fires, so anchor the progress bar here.
+                if (_trackStartTime is null && _lastMetadata is TrackMetadata resumed)
+                {
+                    _trackStartTime = resumed.StartedAt ?? DateTimeOffset.UtcNow;
+                    UpdateProgress();
+                }
             }
 
             // Externally (SMTC/tray icon), playback only ever reports as

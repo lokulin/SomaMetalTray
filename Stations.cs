@@ -165,7 +165,7 @@ public sealed class DeathFmStation : IStation
 
     // death.fm's own logo URL 404s on their end, so this is our already-hosted copy
     // of the same skull/headphones logo (same asset the Cast skin uses).
-    public string FallbackLogoUrl => "https://deathfm-cast.pages.dev/logo.png";
+    public string FallbackLogoUrl => "https://deathfm-cast.l6n.uk/logo.png";
 
     // In a private build whose local.properties sets DEATHFM_STREAM_PROXY_URL, playback goes through the DeathFmCastReceiver's
     // buffering proxy first, falling back to death.fm directly if it is unreachable (AudioPlayerService moves on to the next URL on a
@@ -223,6 +223,7 @@ public sealed class DeathFmNowPlayingSource : INowPlayingSource
     private readonly Timer _pollTimer;
     private string _lastTrackKey = "";
     private int _consecutiveFailures;
+    private int _epoch; // bumped by every Start/Stop so a poll already in flight cannot report or reschedule after a Stop
 
     public event Action<TrackMetadata>? MetadataChanged;
     public event Action? StationInfoLoaded;
@@ -242,17 +243,23 @@ public sealed class DeathFmNowPlayingSource : INowPlayingSource
         _pollTimer.Tick += async (_, _) =>
         {
             _pollTimer.Stop();
-            await PollAsync();
+            await PollAsync(_epoch);
         };
     }
 
     public async Task StartAsync()
     {
+        int epoch = ++_epoch;
+        _lastTrackKey = ""; // a restart reports the track on air again, even if it is the one shown before the stop
         StationInfoLoaded?.Invoke(); // branding is static - nothing to fetch
-        await PollAsync();
+        await PollAsync(epoch);
     }
 
-    public void Stop() => _pollTimer.Stop();
+    public void Stop()
+    {
+        _epoch++;
+        _pollTimer.Stop();
+    }
 
     public void Dispose()
     {
@@ -260,12 +267,14 @@ public sealed class DeathFmNowPlayingSource : INowPlayingSource
         _http.Dispose();
     }
 
-    private async Task PollAsync()
+    private async Task PollAsync(int epoch)
     {
         TimeSpan nextDelay;
         try
         {
             string json = await _http.GetStringAsync($"{NowPlayingUrl}&_t={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}");
+            if (epoch != _epoch)
+                return; // stopped (or restarted) while the request was out
             using JsonDocument doc = JsonDocument.Parse(json);
             nextDelay = Apply(doc.RootElement);
             _consecutiveFailures = 0;
@@ -278,6 +287,9 @@ public sealed class DeathFmNowPlayingSource : INowPlayingSource
             int shift = Math.Min(_consecutiveFailures - 1, 4);
             nextDelay = TimeSpan.FromSeconds(Math.Min(MaxPollDelay.TotalSeconds * (1 << shift), 300));
         }
+
+        if (epoch != _epoch)
+            return;
 
         try
         {

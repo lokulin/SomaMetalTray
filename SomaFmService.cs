@@ -44,6 +44,7 @@ public sealed class SomaFmService : INowPlayingSource
     private readonly Timer _pollTimer;
 
     private string _lastTrackKey = "";
+    private int _epoch; // bumped by every Start/Stop so a poll already in flight cannot report or reschedule after a Stop
 
     public event Action<TrackMetadata>? MetadataChanged;
 
@@ -66,10 +67,14 @@ public sealed class SomaFmService : INowPlayingSource
         _http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("(+https://github.com/lokulin/SomaMetalTray)"));
 
         _pollTimer = new Timer { Interval = (int)(pollInterval ?? TimeSpan.FromSeconds(18)).TotalMilliseconds };
-        _pollTimer.Tick += async (_, _) => await PollSongsAsync();
+        _pollTimer.Tick += async (_, _) => await PollSongsAsync(_epoch);
     }
 
-    public void Stop() => _pollTimer.Stop();
+    public void Stop()
+    {
+        _epoch++;
+        _pollTimer.Stop();
+    }
 
     public void Dispose()
     {
@@ -80,8 +85,12 @@ public sealed class SomaFmService : INowPlayingSource
     /// <summary>Fetches channel branding once and starts the recurring song poll. Best-effort - failures here don't stop the app.</summary>
     public async Task StartAsync()
     {
+        int epoch = ++_epoch;
+        _lastTrackKey = ""; // a restart reports the track on air again, even if it is the one shown before the stop
         await FetchChannelInfoAsync();
-        await PollSongsAsync();
+        if (epoch != _epoch) return;
+        await PollSongsAsync(epoch);
+        if (epoch != _epoch) return;
         _pollTimer.Start();
     }
 
@@ -133,11 +142,13 @@ public sealed class SomaFmService : INowPlayingSource
         }
     }
 
-    private async Task PollSongsAsync()
+    private async Task PollSongsAsync(int epoch)
     {
         try
         {
             using JsonDocument doc = JsonDocument.Parse(await _http.GetStringAsync(SongsUrl));
+            if (epoch != _epoch)
+                return; // stopped (or restarted) while the request was out
 
             // songs/<channel>.json is either a top-level array of song
             // entries, or an object with a "songs" array - handle both since

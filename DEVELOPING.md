@@ -143,6 +143,15 @@ right-click anywhere in the title strip does.
 - **A leading track number some rips carry in their title tag** (e.g. "01
   Song Title") is trimmed before display (e.g. -> "Song Title").
 
+## Stopped state
+
+A live stream cannot be paused, so stop is pause and play tunes in afresh. While stopped (and not casting) `PlayerForm` stops the
+now-playing source (`INowPlayingSource.Stop`; an epoch counter makes a poll already in flight drop its result), shows the station's
+name and logo instead of a track (title, heart, progress, SMTC entry cleared), and looks nothing up (no art, length or upcoming
+queue) and records nothing. Play starts the source again: it forgets its last track key, polls at once, and the resulting
+track event re-anchors the progress bar and refreshes track, art, Last.fm and Discord. `WarmUpStream` is a stream pre-connect, not a
+now-playing lookup, and stays.
+
 ## Album art lookup
 
 `ArtworkService` tries, in order, until one succeeds:
